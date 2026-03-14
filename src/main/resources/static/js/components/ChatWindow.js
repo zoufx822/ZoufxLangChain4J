@@ -3,6 +3,8 @@
  */
 import { sendMessageAPI } from '../api.js';
 import MarkdownRenderer from '../utils/MarkdownRenderer.js';
+import SmartScroll from '../utils/SmartScroll.js';
+import TypewriterEffect from '../utils/TypewriterEffect.js';
 
 // ── Session ID ──────────────────────────────────────────────────────────────
 // 每个浏览器会话生成一次，持久化到 sessionStorage，用于后端会话记忆
@@ -37,29 +39,31 @@ export const ChatWindow = {
             <span style="display: none">.</span>
         </div>
         <div class="chat-container" ref="chatEl" role="log" aria-label="聊天消息">
-            <div v-for="(msg, i) in messages" :key="i" class="message" :class="msg.role">
+            <div class="chat-content">
+                <div v-for="(msg, i) in messages" :key="i" class="message" :class="msg.role">
 
-                <template v-if="msg.role === 'user'">
-                    <div class="message-content" v-html="msg.html"></div>
-                </template>
+                    <template v-if="msg.role === 'user'">
+                        <div class="message-content" v-html="msg.html"></div>
+                    </template>
 
-                <template v-else>
-                    <div v-if="msg.thinking" class="message-thinking" aria-live="polite" aria-atomic="false">
-                        <span class="thinking-label">思考中...</span>{{ msg.thinking }}
-                    </div>
-                    <div v-if="msg.streaming && !msg.html" class="loading-indicator" aria-live="polite">
-                        <span class="loading-dot"></span>
-                        <span class="loading-dot"></span>
-                        <span class="loading-dot"></span>
-                    </div>
-                    <div v-if="msg.html" class="message-text"
-                         :class="{ streaming: msg.streaming, 'contains-code': msg.containsCode }"
-                         :aria-live="msg.streaming ? 'polite' : 'off'"
-                         :aria-busy="msg.streaming"
-                         v-html="msg.html">
-                    </div>
-                </template>
+                    <template v-else>
+                        <div v-if="msg.thinking" class="message-thinking" aria-live="polite" aria-atomic="false">
+                            <span class="thinking-label">思考中...</span>{{ msg.thinking }}
+                        </div>
+                        <div v-if="msg.streaming && !msg.html" class="loading-indicator" aria-live="polite">
+                            <span class="loading-dot"></span>
+                            <span class="loading-dot"></span>
+                            <span class="loading-dot"></span>
+                        </div>
+                        <div v-if="msg.html" class="message-text"
+                             :class="{ streaming: msg.streaming, 'contains-code': msg.containsCode }"
+                             :aria-live="msg.streaming ? 'polite' : 'off'"
+                             :aria-busy="msg.streaming"
+                             v-html="msg.html">
+                        </div>
+                    </template>
 
+                </div>
             </div>
         </div>
         <div class="input-container">
@@ -85,9 +89,33 @@ export const ChatWindow = {
         const isLoading = Vue.ref(false);
         const chatEl = Vue.ref(null);
         let ctrl = null;
+        let smartScroll = null;
+
+        // 初始化智能滚动
+        Vue.onMounted(() => {
+            if (chatEl.value) {
+                smartScroll = new SmartScroll(chatEl.value, {
+                    threshold: 150, // 距离底部150px内自动滚动
+                    autoScrollDelay: 2000, // 用户手动滚动后2秒恢复
+                    smoothScroll: true // 使用平滑滚动
+                });
+            }
+        });
+
+        // 组件销毁时清理智能滚动实例
+        Vue.onUnmounted(() => {
+            if (smartScroll) {
+                smartScroll.destroy();
+                smartScroll = null;
+            }
+        });
 
         const scrollBottom = () => Vue.nextTick(() => {
-            if (chatEl.value) chatEl.value.scrollTop = chatEl.value.scrollHeight;
+            if (smartScroll) {
+                smartScroll.scrollToBottom();
+            } else if (chatEl.value) {
+                chatEl.value.scrollTop = chatEl.value.scrollHeight;
+            }
         });
 
         const sendMessage = async () => {
