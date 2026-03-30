@@ -9,4 +9,8 @@ import lombok.Data;
 public class ChatRequest {
     private String prompt;
     private String sessionId;
+    /**
+     * 是否启用思考模式，默认 true
+     */
+    private boolean thinking = true;
 }

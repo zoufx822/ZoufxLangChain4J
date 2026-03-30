@@ -69,14 +69,14 @@ function parseSSE(buffer) {
  * @param {string} sessionId
  * @param {{ onThinking, onContent, onComplete, onError, signal }} callbacks
  */
-export async function sendMessageAPI(message, sessionId, callbacks) {
+export async function sendMessageAPI(message, sessionId, callbacks, thinking = true) {
     const { onThinking, onContent, onComplete, onError, signal } = callbacks;
 
     try {
         const res = await fetch(API_ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: message, sessionId }),
+            body: JSON.stringify({prompt: message, sessionId, thinking}),
             signal,
         });
 
@@ -123,8 +123,6 @@ export async function sendMessageAPI(message, sessionId, callbacks) {
                            (err instanceof DOMException && err.name === 'AbortError');
 
         if (isAbortError) {
-            // 用户主动停止，视为正常结束
-            console.log('[API] 请求被用户中止');
             onComplete?.();
             return;
         }

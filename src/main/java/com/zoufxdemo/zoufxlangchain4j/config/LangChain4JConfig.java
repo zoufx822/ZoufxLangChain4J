@@ -2,7 +2,6 @@ package com.zoufxdemo.zoufxlangchain4j.config;
 
 import dev.langchain4j.model.anthropic.AnthropicStreamingChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
-import dev.langchain4j.model.anthropic.AnthropicStreamingChatModel.AnthropicStreamingChatModelBuilder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -36,13 +35,12 @@ public class LangChain4JConfig {
     private Integer thinkingBudgetTokens;
 
     /**
-     * 创建流式 ChatModel
+     * 启用思考模式的流式 ChatModel
      */
-    @Bean
-    public StreamingChatModel streamingChatModel() {
-        log.info("Creating StreamingChatModel with baseUrl: {}", baseUrl);
-
-        AnthropicStreamingChatModelBuilder builder = AnthropicStreamingChatModel.builder()
+    @Bean("thinkingChatModel")
+    public StreamingChatModel thinkingChatModel() {
+        log.info("Creating thinkingChatModel with baseUrl: {}", baseUrl);
+        return AnthropicStreamingChatModel.builder()
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .version(version)
@@ -50,8 +48,22 @@ public class LangChain4JConfig {
                 .thinkingType("enabled")
                 .thinkingBudgetTokens(thinkingBudgetTokens)
                 .returnThinking(true)
-                .maxTokens(maxTokens);
+                .maxTokens(maxTokens)
+                .build();
+    }
 
-        return builder.build();
+    /**
+     * 不启用思考模式的流式 ChatModel
+     */
+    @Bean("nonThinkingChatModel")
+    public StreamingChatModel nonThinkingChatModel() {
+        log.info("Creating nonThinkingChatModel with baseUrl: {}", baseUrl);
+        return AnthropicStreamingChatModel.builder()
+                .apiKey(apiKey)
+                .baseUrl(baseUrl)
+                .version(version)
+                .modelName(modelName)
+                .maxTokens(maxTokens)
+                .build();
     }
 }

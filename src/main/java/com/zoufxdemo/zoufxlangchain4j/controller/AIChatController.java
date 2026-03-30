@@ -3,17 +3,18 @@ package com.zoufxdemo.zoufxlangchain4j.controller;
 import com.zoufxdemo.zoufxlangchain4j.model.ChatRequest;
 import com.zoufxdemo.zoufxlangchain4j.service.ChatMemoryService;
 import dev.langchain4j.model.chat.StreamingChatModel;
-import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.PartialThinking;
+import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
@@ -31,7 +32,12 @@ import java.util.concurrent.atomic.AtomicReference;
 public class AIChatController {
 
     @Autowired
-    private StreamingChatModel streamingChatModel;
+    @Qualifier("thinkingChatModel")
+    private StreamingChatModel thinkingChatModel;
+
+    @Autowired
+    @Qualifier("nonThinkingChatModel")
+    private StreamingChatModel nonThinkingChatModel;
 
     @Autowired
     private ChatMemoryService chatMemoryService;
@@ -52,10 +58,13 @@ public class AIChatController {
         // 构建完整提示词
         String fullPrompt = buildPrompt(history, prompt);
 
+        // 根据请求选择是否启用思考模式
+        StreamingChatModel model = request.isThinking() ? thinkingChatModel : nonThinkingChatModel;
+
         // 用于累积完整 content
         AtomicReference<String> fullContent = new AtomicReference<>("");
 
-        return Flux.<ServerSentEvent<String>>create(sink -> streamingChatModel.chat(fullPrompt, new SseResponseHandler(sink, fullContent)))
+        return Flux.<ServerSentEvent<String>>create(sink -> model.chat(fullPrompt, new SseResponseHandler(sink, fullContent)))
                 .doOnComplete(onComplete(prompt, sessionId, fullContent))
                 .doOnCancel(onCancel(sessionId));
     }
