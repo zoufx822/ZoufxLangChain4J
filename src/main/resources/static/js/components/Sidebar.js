@@ -3,10 +3,12 @@
  * 支持新建、切换、删除会话；生成中时禁用操作
  */
 import {
+    closeMobileSidebar,
     createSession,
     currentSessionId,
     deleteSession,
     isLoading,
+    mobileSidebarOpen,
     relativeTime,
     sessions,
     switchSession,
@@ -41,13 +43,26 @@ export const Sidebar = {
             if (!isLoading.value) deleteSession(id);
         };
 
-        return {sessions, currentSessionId, isLoading, timeOf, handleCreate, handleSwitch, handleDelete};
+        const handleSwitch_ = (id) => {
+            handleSwitch(id);
+            closeMobileSidebar();
+        };
+        const handleCreate_ = () => {
+            handleCreate();
+            closeMobileSidebar();
+        };
+
+        return {
+            sessions, currentSessionId, isLoading, mobileSidebarOpen, timeOf,
+            handleCreate: handleCreate_, handleSwitch: handleSwitch_, handleDelete, closeMobileSidebar
+        };
     },
     template: `
-        <aside class="sidebar">
+        <aside class="sidebar" :class="{ 'mobile-open': mobileSidebarOpen }">
             <div class="sidebar-header">
                 <h1>AI 对话</h1>
                 <div class="sidebar-subtitle">专业AI助手</div>
+                <button class="sidebar-close-btn" @click="closeMobileSidebar" aria-label="关闭侧边栏">✕</button>
             </div>
 
             <div class="new-session-btn-wrap">

@@ -167,7 +167,11 @@ public class AIChatController {
         @Override
         public void onError(Throwable error) {
             log.error("Stream error: {}", error.getMessage());
-            sink.error(error);
+            sink.next(ServerSentEvent.<String>builder()
+                    .event("error")
+                    .data(error.getMessage() != null ? error.getMessage() : "AI 服务异常，请稍后重试")
+                    .build());
+            sink.complete();
         }
     }
 }

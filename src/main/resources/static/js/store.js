@@ -40,6 +40,17 @@ export const currentSession = Vue.computed(() =>
 /** 是否正在加载（生成中），由 ChatWindow 写入，Sidebar 读取用于禁用操作 */
 export const isLoading = Vue.ref(false);
 
+/** 移动端侧边栏展开状态 */
+export const mobileSidebarOpen = Vue.ref(false);
+
+export function toggleMobileSidebar() {
+    mobileSidebarOpen.value = !mobileSidebarOpen.value;
+}
+
+export function closeMobileSidebar() {
+    mobileSidebarOpen.value = false;
+}
+
 // ── 操作函数 ──────────────────────────────────────────────────────────────────
 
 export function createSession() {

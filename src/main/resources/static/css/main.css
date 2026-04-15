@@ -643,6 +643,21 @@ body {
 .message-text a { color: #667eea; text-decoration: none; }
 .message-text a:hover { text-decoration: underline; }
 
+/* ── 侧边栏关闭按钮（仅移动端显示） */
+.sidebar-close-btn {
+    display: none;
+}
+
+/* ── 移动端汉堡按钮 */
+.mobile-menu-btn {
+    display: none;
+}
+
+/* ── 移动端遮罩层 */
+.sidebar-backdrop {
+    display: none;
+}
+
 /* ── 响应式 ───────────────────────────────── */
 @media (max-width: 1023px) {
     .sidebar {
@@ -655,6 +670,8 @@ body {
     }
 
     .sidebar-header h1,
+    .sidebar-subtitle,
+    .new-session-label,
     .session-title,
     .session-time,
     .sidebar-footer span:not(.status-dot) {
@@ -662,10 +679,116 @@ body {
     }
 
     .sidebar:hover .sidebar-header h1,
+    .sidebar:hover .sidebar-subtitle,
+    .sidebar:hover .new-session-label,
     .sidebar:hover .session-title,
     .sidebar:hover .session-time,
     .sidebar:hover .sidebar-footer span:not(.status-dot) {
-        display: inline;
+        display: revert;
+    }
+
+    /* 折叠时各区域图标居中 */
+    .sidebar-header {
+        padding: 16px 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .sidebar:hover .sidebar-header {
+        padding: 24px 20px 20px;
+        display: block;
+    }
+
+    .new-session-btn-wrap {
+        padding: 10px 0 4px;
+        display: flex;
+        justify-content: center;
+    }
+
+    .new-session-btn {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        justify-content: center;
+        border-radius: 8px;
+    }
+
+    .sidebar:hover .new-session-btn {
+        width: 100%;
+        height: auto;
+        padding: 8px 12px;
+        justify-content: flex-start;
+        border-radius: 6px;
+    }
+
+    .sidebar:hover .new-session-btn-wrap {
+        padding: 10px 12px 4px;
+        display: block;
+    }
+
+    .sessions-list {
+        padding: 8px 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .session-item {
+        width: 40px;
+        padding: 8px 0;
+        justify-content: center;
+    }
+
+    /* 折叠时图标居中，清除原有的右边距 */
+    .session-icon {
+        margin-right: 0 !important;
+        margin-left: 0 !important;
+    }
+
+    /* session-info 容器本身折叠时也隐藏，否则占位挤走图标 */
+    .session-info,
+    .session-delete-btn {
+        display: none;
+    }
+
+    .sidebar:hover .sessions-list {
+        padding: 8px 12px;
+        align-items: stretch;
+    }
+
+    .sidebar:hover .session-item {
+        width: auto;
+        padding: 10px 12px;
+        justify-content: flex-start;
+    }
+
+    .sidebar:hover .session-info {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .sidebar:hover .session-delete-btn {
+        display: revert;
+    }
+
+    .sidebar-footer {
+        padding: 12px 0;
+        display: flex;
+        justify-content: center;
+    }
+
+    .sidebar-footer .status-indicator {
+        justify-content: center;
+    }
+
+    .sidebar:hover .sidebar-footer {
+        padding: 16px 20px;
+        display: block;
+    }
+
+    .sidebar:hover .sidebar-footer .status-indicator {
+        justify-content: flex-start;
     }
 
     .chat-content {
@@ -679,17 +802,87 @@ body {
 }
 
 @media (max-width: 767px) {
+    /* 侧边栏：默认隐藏，open 时作为抽屉覆盖在内容上 */
     .sidebar {
-        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 280px;
+        z-index: 200;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        box-shadow: none;
     }
 
-    .header {
+    .sidebar.mobile-open {
+        transform: translateX(0);
+        box-shadow: 4px 0 20px rgba(0, 0, 0, 0.15);
+    }
+
+    /* 恢复侧边栏内文字（覆盖 1023px 的隐藏规则） */
+    .sidebar-header h1,
+    .sidebar-subtitle,
+    .new-session-label,
+    .session-title,
+    .session-time,
+    .sidebar-footer span:not(.status-dot) {
+        display: revert;
+    }
+
+    /* 侧边栏关闭按钮 */
+    .sidebar-close-btn {
         display: block;
+        position: absolute;
+        top: 16px;
+        right: 14px;
+        background: none;
+        border: none;
+        font-size: 16px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        line-height: 1;
+        padding: 4px;
+    }
+
+    /* 遮罩层 */
+    .sidebar-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.35);
+        z-index: 199;
+    }
+
+    /* 移动端顶部 header */
+    .header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
         padding: 12px 16px;
     }
 
     .header h1 {
         font-size: 16px;
+    }
+
+    .mobile-menu-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border: none;
+        background: none;
+        font-size: 20px;
+        cursor: pointer;
+        color: var(--text-primary);
+        flex-shrink: 0;
+        border-radius: 6px;
+    }
+
+    .mobile-menu-btn:hover {
+        background: var(--bg-secondary);
     }
 
     .chat-content {
@@ -705,23 +898,32 @@ body {
     }
 
     .input-container {
-        padding: 12px;
+        padding: 10px 12px;
     }
 
     .input-wrapper {
         gap: 8px;
+        align-items: center;
+    }
+
+    .thinking-toggle-btn {
+        width: 38px;
+        height: 38px;
+        font-size: 18px;
     }
 
     .input-wrapper textarea {
         padding: 10px 14px;
         font-size: 14px;
         border-radius: 20px;
+        min-height: 38px;
     }
 
-    .input-wrapper button {
+    .input-wrapper button:last-child {
         padding: 10px 18px;
         font-size: 13px;
         border-radius: 20px;
+        white-space: nowrap;
     }
 }
 
@@ -742,5 +944,9 @@ body {
 
     .thinking-label {
         font-size: 11px;
+    }
+
+    .input-wrapper button:last-child {
+        padding: 9px 14px;
     }
 }

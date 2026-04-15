@@ -8,7 +8,13 @@
 import {sendMessageAPI} from '../api.js';
 import MarkdownRenderer from '../utils/MarkdownRenderer.js';
 import SmartScroll from '../utils/SmartScroll.js';
-import {currentSession, currentSessionId, isLoading as storeLoading, updateSessionTitle,} from '../store.js';
+import {
+    currentSession,
+    currentSessionId,
+    isLoading as storeLoading,
+    toggleMobileSidebar,
+    updateSessionTitle,
+} from '../store.js';
 
 // ── 工具 ──────────────────────────────────────────────────────────────────────
 const md = MarkdownRenderer.getInstance();
@@ -25,6 +31,7 @@ export const ChatWindow = {
     template: `
     <div class="container">
         <div class="header">
+            <button class="mobile-menu-btn" @click="toggleMobileSidebar" aria-label="打开会话列表">☰</button>
             <h1>AI 对话</h1>
         </div>
 
@@ -311,6 +318,17 @@ export const ChatWindow = {
             }
         };
 
-        return {messages, inputText, loading, thinkingEnabled, chatEl, inputEl, send, stop, handleKeydown};
+        return {
+            messages,
+            inputText,
+            loading,
+            thinkingEnabled,
+            chatEl,
+            inputEl,
+            send,
+            stop,
+            handleKeydown,
+            toggleMobileSidebar
+        };
     },
 };
