@@ -19,7 +19,7 @@ mvn clean package          # 打包
 **前端（已弃用）：** `src/main/resources/static/` 下的原生 JS 前端已弃用，保留但不再维护。
 
 **实际前端：** 独立项目 `E:\ZoufxDemo\ZoufxAIAgent-Web`（单独的 Git 仓库），技术栈：Next.js 16 + React 19 + TypeScript +
-Tailwind CSS 4 + shadcn/ui + Zustand + TanStack Query + Vercel AI SDK。开发命令 `pnpm dev`。
+Tailwind CSS 4 + shadcn/ui + Zustand + TanStack Query。开发命令 `pnpm dev`。
 
 ## 工作原则
 
