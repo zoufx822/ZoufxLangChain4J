@@ -12,7 +12,7 @@
     </parent>
 
     <groupId>com.zoufx</groupId>
-    <artifactId>ai-agent</artifactId>
+    <artifactId>ZoufxAIAgent</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>ZoufxAIAgent</name>
     <description>Java LLM Integration Project</description>
