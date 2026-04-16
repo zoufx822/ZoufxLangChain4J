@@ -1,4 +1,4 @@
-package com.zoufxdemo.zoufxlangchain4j.service;
+package com.zoufx.ai.agent.service;
 
 import java.util.List;
 

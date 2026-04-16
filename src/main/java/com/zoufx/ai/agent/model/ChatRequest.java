@@ -1,4 +1,4 @@
-package com.zoufxdemo.zoufxlangchain4j.model;
+package com.zoufx.ai.agent.model;
 
 import lombok.Data;
 

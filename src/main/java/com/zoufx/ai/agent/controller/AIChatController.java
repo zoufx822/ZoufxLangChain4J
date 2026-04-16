@@ -1,7 +1,7 @@
-package com.zoufxdemo.zoufxlangchain4j.controller;
+package com.zoufx.ai.agent.controller;
 
-import com.zoufxdemo.zoufxlangchain4j.model.ChatRequest;
-import com.zoufxdemo.zoufxlangchain4j.service.ChatMemoryService;
+import com.zoufx.ai.agent.model.ChatRequest;
+import com.zoufx.ai.agent.service.ChatMemoryService;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.PartialThinking;
@@ -12,10 +12,13 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import jakarta.servlet.http.HttpServletResponse;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 
@@ -27,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 支持会话记忆功能和 thinking 解析
  */
 @Slf4j
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001"})
 @RestController
 @RequestMapping("/ai")
 public class AIChatController {
@@ -47,7 +51,9 @@ public class AIChatController {
      * 格式: "thinking:xxx\n\ncontent:xxx" 前端需要解析
      */
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<String>> chat(@RequestBody ChatRequest request) {
+    public Flux<ServerSentEvent<String>> chat(@RequestBody ChatRequest request, HttpServletResponse response) {
+        response.setHeader("X-Accel-Buffering", "no");
+        response.setHeader("Cache-Control", "no-cache");
         String sessionId = StringUtils.hasText(request.getSessionId()) ? request.getSessionId() : "default";
         String prompt = StringUtils.hasText(request.getPrompt()) ? request.getPrompt().trim() : "";
         log.info("Received prompt [sessionId={}]: {}", sessionId, prompt);
@@ -79,7 +85,7 @@ public class AIChatController {
     /**
      * 构建完整的提示词（包含历史对话），统一使用 User:/Assistant: 角色标签
      */
-    private static final int MAX_HISTORY_CHARS = 40000;
+    private static final int MAX_HISTORY_CHARS = 12000;
 
     private String buildPrompt(List<String> history, String prompt) {
         if (history.isEmpty()) {

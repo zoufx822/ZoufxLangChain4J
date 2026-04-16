@@ -1,6 +1,6 @@
-package com.zoufxdemo.zoufxlangchain4j.service.impl;
+package com.zoufx.ai.agent.service.impl;
 
-import com.zoufxdemo.zoufxlangchain4j.service.ChatMemoryService;
+import com.zoufx.ai.agent.service.ChatMemoryService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -17,7 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Service
 public class ChatMemoryServiceImpl implements ChatMemoryService {
 
-    private static final int MAX_MESSAGES = 40;
+    private static final int MAX_MESSAGES = 20;
 
     /**
      * 使用 ConcurrentHashMap 存储会话消息

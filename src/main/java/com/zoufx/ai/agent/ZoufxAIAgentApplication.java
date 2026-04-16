@@ -1,12 +1,12 @@
-package com.zoufxdemo.zoufxlangchain4j;
+package com.zoufx.ai.agent;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class ZoufxLangChain4JApplication {
+public class ZoufxAIAgentApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(ZoufxLangChain4JApplication.class, args);
+        SpringApplication.run(ZoufxAIAgentApplication.class, args);
     }
 }

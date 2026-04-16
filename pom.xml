@@ -11,10 +11,10 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.zoufxdemo</groupId>
-    <artifactId>zoufx-langchain4j</artifactId>
+    <groupId>com.zoufx</groupId>
+    <artifactId>ai-agent</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>ZoufxLangChain4J</name>
+    <name>ZoufxAIAgent</name>
     <description>Java LLM Integration Project</description>
     <packaging>jar</packaging>
 

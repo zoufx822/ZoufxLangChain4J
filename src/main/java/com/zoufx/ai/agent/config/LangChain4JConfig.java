@@ -1,4 +1,4 @@
-package com.zoufxdemo.zoufxlangchain4j.config;
+package com.zoufx.ai.agent.config;
 
 import dev.langchain4j.model.anthropic.AnthropicStreamingChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
