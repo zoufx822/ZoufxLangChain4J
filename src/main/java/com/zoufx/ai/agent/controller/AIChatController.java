@@ -1,33 +1,23 @@
 package com.zoufx.ai.agent.controller;
 
+import com.zoufx.ai.agent.assistant.ChatAssistant;
 import com.zoufx.ai.agent.model.ChatRequest;
-import com.zoufx.ai.agent.service.ChatMemoryService;
-import dev.langchain4j.model.chat.StreamingChatModel;
-import dev.langchain4j.model.chat.response.ChatResponse;
-import dev.langchain4j.model.chat.response.PartialThinking;
-import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import dev.langchain4j.store.memory.chat.ChatMemoryStore;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.util.StringUtils;
-import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 
-import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.Map;
 
 /**
- * AI 控制器 - 使用 LangChain4J Anthropic 模块调用 MiniMax API
- * 支持会话记忆功能和 thinking 解析
+ * AI 控制器 —— 基于 LangChain4J AiServices + TokenStream。
+ * Controller 只做 HTTP 适配：assistant 路由、TokenStream 回调 → SSE 事件翻译。
  */
 @Slf4j
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001"})
@@ -36,148 +26,60 @@ import java.util.concurrent.atomic.AtomicReference;
 public class AIChatController {
 
     @Autowired
-    @Qualifier("thinkingChatModel")
-    private StreamingChatModel thinkingChatModel;
+    @Qualifier("thinkingAssistant")
+    private ChatAssistant thinkingAssistant;
 
     @Autowired
-    @Qualifier("nonThinkingChatModel")
-    private StreamingChatModel nonThinkingChatModel;
+    @Qualifier("nonThinkingAssistant")
+    private ChatAssistant nonThinkingAssistant;
 
     @Autowired
-    private ChatMemoryService chatMemoryService;
+    private ChatMemoryStore chatMemoryStore;
 
-    /**
-     * 对话接口 - 使用 Server-Sent Events (SSE) 返回响应
-     * 格式: "thinking:xxx\n\ncontent:xxx" 前端需要解析
-     */
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chat(@RequestBody ChatRequest request, HttpServletResponse response) {
         response.setHeader("X-Accel-Buffering", "no");
         response.setHeader("Cache-Control", "no-cache");
+
         String sessionId = StringUtils.hasText(request.getSessionId()) ? request.getSessionId() : "default";
         String prompt = StringUtils.hasText(request.getPrompt()) ? request.getPrompt().trim() : "";
-        log.info("Received prompt [sessionId={}]: {}", sessionId, prompt);
+        log.info("Received prompt [sessionId={}, thinking={}]: {}", sessionId, request.isThinking(), prompt);
 
         if (prompt.isEmpty()) {
-            return Flux.just(ServerSentEvent.<String>builder()
-                    .event("error")
-                    .data("prompt 不能为空")
-                    .build());
+            return Flux.just(sse("error", "prompt 不能为空"));
         }
 
-        // 获取历史消息
-        List<String> history = chatMemoryService.getHistory(sessionId);
+        ChatAssistant assistant = request.isThinking() ? thinkingAssistant : nonThinkingAssistant;
 
-        // 构建完整提示词
-        String fullPrompt = buildPrompt(history, prompt);
-
-        // 根据请求选择是否启用思考模式
-        StreamingChatModel model = request.isThinking() ? thinkingChatModel : nonThinkingChatModel;
-
-        // 用于累积完整 content
-        AtomicReference<String> fullContent = new AtomicReference<>("");
-
-        return Flux.<ServerSentEvent<String>>create(sink -> model.chat(fullPrompt, new SseResponseHandler(sink, fullContent)))
-                .doOnComplete(onComplete(prompt, sessionId, fullContent))
-                .doOnCancel(onCancel(sessionId));
+        return Flux.<ServerSentEvent<String>>create(sink ->
+                assistant.chat(sessionId, prompt)
+                        .onPartialThinking(pt -> {
+                            if (pt != null && pt.text() != null) {
+                                sink.next(sse("thinking", pt.text()));
+                            }
+                        })
+                        .onPartialResponse(ct -> sink.next(sse("content", ct)))
+                        .onError(err -> {
+                            log.error("Stream error [sessionId={}]", sessionId, err);
+                            sink.next(sse("error", err.getMessage() != null ? err.getMessage() : "AI 服务异常，请稍后重试"));
+                            sink.complete();
+                        })
+                        .onCompleteResponse(r -> {
+                            log.info("Stream completed [sessionId={}]", sessionId);
+                            sink.complete();
+                        })
+                        .start()
+        ).doOnCancel(() -> log.info("Stream cancelled [sessionId={}]", sessionId));
     }
 
-    /**
-     * 构建完整的提示词（包含历史对话），统一使用 User:/Assistant: 角色标签
-     */
-    private static final int MAX_HISTORY_CHARS = 12000;
-
-    private String buildPrompt(List<String> history, String prompt) {
-        if (history.isEmpty()) {
-            return "User: " + prompt;
-        }
-        // 从最新消息往前取，超过字符限制时截断，避免 prompt 过长导致 API 报错
-        int totalChars = 0;
-        int startIdx = history.size();
-        for (int i = history.size() - 1; i >= 0; i--) {
-            totalChars += history.get(i).length() + 1;
-            if (totalChars > MAX_HISTORY_CHARS) break;
-            startIdx = i;
-        }
-        List<String> trimmed = history.subList(startIdx, history.size());
-        return String.join("\n", trimmed) + "\n\nUser: " + prompt;
+    @DeleteMapping("/session/{sessionId}")
+    public Map<String, Object> clearSession(@PathVariable String sessionId) {
+        log.info("Clearing session memory: {}", sessionId);
+        chatMemoryStore.deleteMessages(sessionId);
+        return Map.of("cleared", sessionId);
     }
 
-    /**
-     * 流完成时的处理
-     */
-    private Runnable onComplete(String prompt, String sessionId, AtomicReference<String> fullContent) {
-        return () -> {
-            // 保存用户消息
-            chatMemoryService.addUserMessage(sessionId, prompt);
-
-            // 保存助手回复
-            String responseText = fullContent.get();
-            if (StringUtils.hasText(responseText)) {
-                chatMemoryService.addAssistantMessage(sessionId, responseText);
-                log.debug("Saved assistant message to session {}: {}", sessionId, responseText);
-            }
-            log.info("Stream completed [sessionId={}]", sessionId);
-        };
-    }
-
-    /**
-     * 流取消时的处理
-     */
-    private Runnable onCancel(String sessionId) {
-        return () -> log.info("Stream cancelled [sessionId={}]", sessionId);
-    }
-
-    /**
-     * SSE 响应处理器 - 处理流式响应
-     */
-    private static class SseResponseHandler implements StreamingChatResponseHandler {
-
-        private final FluxSink<ServerSentEvent<String>> sink;
-        private final AtomicReference<String> fullContent;
-
-        SseResponseHandler(FluxSink<ServerSentEvent<String>> sink, AtomicReference<String> fullContent) {
-            this.sink = sink;
-            this.fullContent = fullContent;
-        }
-
-        @Override
-        public void onPartialThinking(PartialThinking partialThinking) {
-            if (partialThinking != null && partialThinking.text() != null) {
-                // 直接发送 thinking 事件给前端
-                ServerSentEvent<String> event = ServerSentEvent.<String>builder()
-                        .data(partialThinking.text())
-                        .event("thinking")
-                        .build();
-                sink.next(event);
-            }
-        }
-
-        @Override
-        public void onPartialResponse(String partialText) {
-            fullContent.updateAndGet(current -> current + partialText);
-            // 直接发送 content 事件给前端
-            ServerSentEvent<String> event = ServerSentEvent.<String>builder()
-                    .data(partialText)
-                    .event("content")
-                    .build();
-            sink.next(event);
-        }
-
-        @Override
-        public void onCompleteResponse(ChatResponse fullResponse) {
-            log.info("Stream completed, full content: {}", fullContent.get());
-            sink.complete();
-        }
-
-        @Override
-        public void onError(Throwable error) {
-            log.error("Stream error: {}", error.getMessage());
-            sink.next(ServerSentEvent.<String>builder()
-                    .event("error")
-                    .data(error.getMessage() != null ? error.getMessage() : "AI 服务异常，请稍后重试")
-                    .build());
-            sink.complete();
-        }
+    private static ServerSentEvent<String> sse(String event, String data) {
+        return ServerSentEvent.<String>builder().event(event).data(data).build();
     }
 }

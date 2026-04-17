@@ -32,7 +32,14 @@
             <version>1.11.0</version>
         </dependency>
 
-    <!-- LangChain4J Anthropic -->
+        <!-- LangChain4J 主包：AiServices / ChatMemory / ChatMemoryProvider / InMemoryChatMemoryStore 等高阶编排件 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+            <version>1.11.0</version>
+        </dependency>
+
+        <!-- LangChain4J Anthropic -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-anthropic</artifactId>
