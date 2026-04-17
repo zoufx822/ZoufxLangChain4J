@@ -14,7 +14,7 @@ spring:
       version: 2023-06-01
       chat:
         options:
-          model: MiniMax-M2.7
+          model: MiniMax-M2.5
           max-tokens: 16384
           thinking:
             type: enabled
