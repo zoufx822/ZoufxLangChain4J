@@ -9,79 +9,97 @@ description: ZoufxAIAgent 项目前后端技术选型备忘。当用户提出任
 
 ## 触发原则
 
-**宁可多触发，不要漏触发。**只要用户的需求满足以下任一条，就查阅本备忘：
+**宁可多触发，不要漏触发。** 只要用户的需求满足以下任一条，就查阅本备忘：
 
 - 可能需要引入新库/新框架/新中间件
 - 用新技术能比现有栈更方便、更优雅
 - 用户问"有没有更好的办法 / 用什么 / 推荐什么"
-- 现有栈（Spring Boot 4.0.3 + LangChain4J + Vue CDN）处理起来吃力
 - 涉及前端架构、后端架构、数据层、AI/Agent、部署等技术选型
 
-## 决策权重（用户明确）
+## 决策权重
 
 **用户体验 > 未来扩展 > 生态完善**；**不考虑**学习成本和编码量（前后端代码均由 AI 生成）。
 
-权重变化时需用户明确说明，否则一律按此执行。
+---
+
+## 后端
+
+### 已在用
+
+| 技术 | 说明 |
+|------|------|
+| Spring Boot 4.0.3 | Web 框架，JDK 21 |
+| Spring WebFlux | 返回 `Flux<ServerSentEvent>` 实现 SSE 流式输出 |
+| LangChain4J 1.11.0 | AiServices 动态代理、ChatMemory、TokenStream |
+| langchain4j-anthropic | 连接 MiniMax Anthropic 兼容接口的 StreamingChatModel |
+| Lombok | 减少样板代码 |
+
+### 扩展时的优选方案
+
+> 每次与用户拍板后，在此新增一行。
+
+| 场景 | 优选方案 | 说明 |
+|------|----------|------|
+| *（待补充）* | *（待补充）* | — |
 
 ---
 
-## 前端默认栈
+## 前端
 
-| 维度              | 选型                                                       | 关键理由                                                                                       |
-|-----------------|----------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| **框架**          | Next.js 15（App Router + RSC + PPR）                       | RSC 首屏零 JS、Streaming SSR + Suspense 与 SSE 流式聊天天然契合、Partial Prerendering 拉满 Core Web Vitals |
-| **语言**          | TypeScript 5.x                                           | 类型安全                                                                                       |
-| **样式**          | Tailwind CSS v4                                          | CSS-first、零配置                                                                              |
-| **组件库**         | shadcn/ui + Radix Primitives                             | 复制粘贴式、完全可控、无锁定                                                                             |
-| **动画**          | Framer Motion（motion）                                    | React 动画事实标准                                                                               |
-| **AI 聊天 UI**    | Vercel AI SDK（`useChat`）+ **assistant-ui** 或 shadcn-chat | 原生 SSE、工具调用、多模态、Resumable Streams；替代手写 SSE 解析/打字机/thinking 展开                              |
-| **服务端状态**       | TanStack Query v5                                        | 缓存、重试、乐观更新                                                                                 |
-| **客户端状态**       | Zustand                                                  | 轻量、无样板                                                                                     |
-| **表单**          | React Hook Form + Zod                                    | 性能 + 类型安全校验                                                                                |
-| **图标**          | Lucide                                                   | 与 shadcn 一致                                                                                |
-| **包管理**         | pnpm                                                     | 快、省磁盘                                                                                      |
-| **Lint/Format** | Biome                                                    | 替代 ESLint + Prettier                                                                       |
-| **构建**          | Turbopack（Next 内置）                                       | -                                                                                          |
-| **部署**          | Vercel（前端） + Spring Boot（后端）                             | 前后端分离                                                                                      |
+### 已在用
 
-**不选 Vue 生态的理由**：一旦放开学习成本，React 生态在 AI 前端的组件库深度和工具链成熟度上有代际优势（AI SDK /
-assistant-ui / CopilotKit / LangChain.js 等 React 独占）。
+| 技术 | 说明 |
+|------|------|
+| Next.js 16 | App Router，SSR/路由，Turbopack HMR |
+| React 19 | UI 框架 |
+| TypeScript | 类型安全 |
+| Tailwind CSS 4 | 工具类样式，CSS-first 零配置 |
+| @tailwindcss/typography | Markdown prose 排版样式 |
+| @base-ui/react | headless UI 原语（Button/Input/Tooltip/Sheet/ScrollArea 等），shadcn 现已基于 Base UI |
+| shadcn | 组件代码生成器（构建时工具） |
+| Zustand 5 | 客户端状态管理（会话列表、消息、加载状态） |
+| streaming-markdown | 流式增量解析并直接写入 DOM，实现打字机效果 |
+| Shiki | 流结束后对代码块应用语法高亮 |
+| Motion | 动画库（消息展开/收起的 AnimatePresence） |
+| lucide-react | 图标，与 shadcn 一致 |
+| next-themes | 深色/浅色主题切换 |
+| sonner | Toast 通知（用于流式错误提示） |
+| pnpm | 包管理，快、省磁盘 |
 
-**AI 聊天深化的首选组合**：`Next.js 15 + Vercel AI SDK + assistant-ui`，不要再手写 SSE 解析、打字机、thinking 折叠等原语。
+### 已安装未实际用上
 
----
+| 技术 | 说明 |
+|------|------|
+| @tanstack/react-query 5 | 服务端状态管理（QueryClient 已配置，无实际查询） |
 
-## 后端默认栈
+### 扩展时的优选方案
 
-**当前基座**：Spring Boot 4.0.3 + LangChain4J 1.11.0 + JDK 21。保持不变，以下为**扩展时**的优选方案。
+| 维度 | 选型 | 说明 |
+|------|------|------|
+| 表单 | React Hook Form + Zod | 性能 + 类型安全校验 |
+| Lint/Format | Biome | 替代 ESLint + Prettier |
 
-> 后端部分会随项目演进持续增补，遇到新场景时补进本表。
+### 不选项及原因
 
-| 场景      | 优选方案    | 说明            |
-|---------|---------|---------------|
-| *（待补充）* | *（待补充）* | 后续每次拍板后在此新增一行 |
+| 技术 | 原因 |
+|------|------|
+| Vercel AI SDK `useChat` | 后端 SSE 使用自定义事件（`thinking`/`content`/`error`），与 AI SDK 数据流协议不兼容，改造代价大于收益 |
 
 ---
 
 ## 架构形态
 
 ```
-[ Next.js 15 独立部署 ]  ──SSE/HTTP──>  [ Spring Boot + LangChain4J ]
-       │                                         │
-       └── BFF 层用 Next Route Handlers          └── 数据/AI/中间件按后端表选型
+[ Next.js 16（../ZoufxAIAgent-Web） ]  ──SSE/HTTP──>  [ Spring Boot + LangChain4J ]
 ```
 
 ---
 
 ## 决策规则
 
-**用户提起需求时，按以下顺序思考：**
-
 1. **新功能/新模块**：直接按上表选型，无需再问。
-2. **现有 Vue CDN 前端的小修小补**：沿用现状（Vue 3 + markdown-it + Prism），**不要**强行引入新技术造成混合栈。
-3. **前后端分离/整体重构**：上表即为目标架构。
-4. **后端新增能力**：查后端表；若表中没有对应场景，与用户讨论后拍板并**回写本 skill 新增一行**。
-5. **用户提出与上表冲突的选型**：尊重用户决定，但简短提醒一句本备忘的默认选择与理由。
+2. **后端新增能力**：查后端扩展表；表中没有则与用户讨论后拍板并**回写本 skill 新增一行**。
+3. **用户提出与上表冲突的选型**：尊重用户决定，但简短提醒本备忘的默认选择与理由。
 
 ## 偏离本备忘的触发条件
 
@@ -90,8 +108,6 @@ assistant-ui / CopilotKit / LangChain.js 等 React 独占）。
 - 用户**明确**改变了决策权重
 - 出现**新技术**且在"用户体验 + 生态"上明显超越当前选型
 - 项目场景发生结构性变化
-
-其余情况，默认按上表执行。
 
 ## 维护规则
 
