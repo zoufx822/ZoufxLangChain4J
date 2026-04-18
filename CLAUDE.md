@@ -2,7 +2,7 @@
 
 ## 项目
 
-Spring Boot 4.0.3 + LangChain4J 1.11.0，通过 Anthropic 兼容接口连接 MiniMax AI（`MiniMax-M2.7`），支持带会话记忆的流式聊天和思考模式。
+Spring Boot 4.0.3 + LangChain4J 1.11.0，通过 Anthropic 兼容接口连接 MiniMax AI（`MiniMax-M2.5`），支持带会话记忆的流式聊天和思考模式。
 
 ## 命令
 
@@ -13,13 +13,27 @@ mvn clean package          # 打包
 
 ## 架构
 
-**后端：** `ChatRequest { prompt, sessionId, thinking }` → `AIChatController` 按 `thinking` 字段选择 model → SSE 流输出
-`thinking` / `content` 两类事件。配置在 `application.yml`。
+### 后端
 
-**前端（已弃用）：** `src/main/resources/static/` 下的原生 JS 前端已弃用，保留但不再维护。
+`ChatRequest { prompt, sessionId, thinking }` → `AIChatController` → 按 `thinking` 字段路由到对应 `ChatAssistant` Bean → TokenStream 回调翻译为 SSE 事件。
 
-**实际前端：** 同级目录 `../ZoufxAIAgent-Web`（单独的 Git 仓库，始终与后端同级摆放），技术栈：Next.js 16 + React 19 + TypeScript +
-Tailwind CSS 4 + shadcn/ui + Zustand + TanStack Query。开发命令 `pnpm dev`。
+**关键类：**
+- `ChatAssistant`：LangChain4J AiService 接口，`@MemoryId sessionId` + `@UserMessage`，由 `AiServices.builder()` 动态代理实现
+- `AssistantConfig`：装配 `thinkingAssistant` / `nonThinkingAssistant` 两个 Bean，共享同一 `ChatMemoryProvider`（同 sessionId 跨模式历史连续）
+- `LangChain4JConfig`：构建两个 `AnthropicStreamingChatModel`，连接 MiniMax Anthropic 兼容接口（`https://api.minimaxi.com/anthropic/v1`）
+- `ChatMemoryConfig`：内存会话记忆，`MessageWindowChatMemory`
+
+**SSE 事件类型：** `thinking`（思考过程）/ `content`（正文）/ `error`
+
+**配置：** `application.yml`，模型 `MiniMax-M2.5`，max-tokens 16384，thinking budget-tokens 8192
+
+**接口：**
+- `POST /ai/chat` — 流式聊天（SSE）
+- `DELETE /ai/session/{sessionId}` — 清除会话记忆
+
+### 前端
+
+独立仓库 `../ZoufxAIAgent-Web`（与后端同级），技术栈：Next.js 16 + React 19 + TypeScript + Tailwind CSS 4 + shadcn/ui + Zustand + TanStack Query。开发命令 `pnpm dev`（localhost:3000）。
 
 ## 工作原则
 
