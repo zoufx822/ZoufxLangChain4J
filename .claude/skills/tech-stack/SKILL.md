@@ -66,16 +66,11 @@ description: ZoufxAIAgent 项目前后端技术选型备忘。当用户提出任
 | sonner | Toast 通知（用于流式错误提示） |
 | pnpm | 包管理，快、省磁盘 |
 
-### 已安装未实际用上
-
-| 技术 | 说明 |
-|------|------|
-| @tanstack/react-query 5 | 服务端状态管理（QueryClient 已配置，无实际查询） |
-
 ### 扩展时的优选方案
 
 | 维度 | 选型 | 说明 |
 |------|------|------|
+| 服务端状态 | @tanstack/react-query 5 | 已安装；适用于普通 REST 接口的缓存/重试/自动刷新，SSE 流式接口不适用 |
 | 表单 | React Hook Form + Zod | 性能 + 类型安全校验 |
 | Lint/Format | Biome | 替代 ESLint + Prettier |
 

@@ -20,7 +20,6 @@ import java.util.Map;
  * Controller 只做 HTTP 适配：assistant 路由、TokenStream 回调 → SSE 事件翻译。
  */
 @Slf4j
-@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001"})
 @RestController
 @RequestMapping("/ai")
 public class AIChatController {

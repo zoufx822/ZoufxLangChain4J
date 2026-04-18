@@ -1,0 +1,8 @@
+com/zoufx/ai/agent/assistant/ChatAssistant.class
+com/zoufx/ai/agent/ZoufxAIAgentApplication.class
+com/zoufx/ai/agent/config/LangChain4JConfig.class
+com/zoufx/ai/agent/config/WebConfig.class
+com/zoufx/ai/agent/config/ChatMemoryConfig.class
+com/zoufx/ai/agent/controller/AIChatController.class
+com/zoufx/ai/agent/model/ChatRequest.class
+com/zoufx/ai/agent/config/AssistantConfig.class

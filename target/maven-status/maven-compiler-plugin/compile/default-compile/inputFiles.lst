@@ -1,0 +1,8 @@
+/home/zoufx/.zoufxDemo/ZoufxAIAgent/src/main/java/com/zoufx/ai/agent/ZoufxAIAgentApplication.java
+/home/zoufx/.zoufxDemo/ZoufxAIAgent/src/main/java/com/zoufx/ai/agent/assistant/ChatAssistant.java
+/home/zoufx/.zoufxDemo/ZoufxAIAgent/src/main/java/com/zoufx/ai/agent/config/AssistantConfig.java
+/home/zoufx/.zoufxDemo/ZoufxAIAgent/src/main/java/com/zoufx/ai/agent/config/ChatMemoryConfig.java
+/home/zoufx/.zoufxDemo/ZoufxAIAgent/src/main/java/com/zoufx/ai/agent/config/LangChain4JConfig.java
+/home/zoufx/.zoufxDemo/ZoufxAIAgent/src/main/java/com/zoufx/ai/agent/config/WebConfig.java
+/home/zoufx/.zoufxDemo/ZoufxAIAgent/src/main/java/com/zoufx/ai/agent/controller/AIChatController.java
+/home/zoufx/.zoufxDemo/ZoufxAIAgent/src/main/java/com/zoufx/ai/agent/model/ChatRequest.java

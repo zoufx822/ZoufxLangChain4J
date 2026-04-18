@@ -1,0 +1,21 @@
+server:
+  port: 8080
+
+logging:
+  level:
+    root: INFO
+
+spring:
+  ai:
+    anthropic:
+      base-url: https://api.minimaxi.com/anthropic/v1
+      # 安全提醒：生产环境应使用环境变量 ${MINIMAX_API_KEY} 替换此处明文，避免密钥泄露
+      api-key: sk-cp-8Msokvuwxf6wgrF7zHUd60kNiEeHqM2faSWCFF8w6VmS_q59wLbRa-KlDQLRZs0SJGcKzKQj9kpfb4rwJdFdW1YojVfao01zR9vZcb_8xp7BHX0i92lex84
+      version: 2023-06-01
+      chat:
+        options:
+          model: MiniMax-M2.5
+          max-tokens: 16384
+          thinking:
+            type: enabled
+            budget-tokens: 8192
