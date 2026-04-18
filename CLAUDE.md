@@ -16,12 +16,6 @@ Spring Boot 4.0.3 + LangChain4J 1.11.0，通过 Anthropic 兼容接口连接 Min
 - 临时文件按需清理，用户主动要求时执行
 - 新功能完成后执行 `/test` 自测
 
-**多 Agent**（涉及多个独立模块且任务量大时）
-
-1. `superpowers:using-git-worktrees` 创建工作树
-2. 多 agent 并行开发
-3. `superpowers:finishing-a-development-branch` 合并
-
 **跳过以下 skill**
 
 - `superpowers:test-driven-development`
