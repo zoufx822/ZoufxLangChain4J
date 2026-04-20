@@ -2,6 +2,7 @@ package com.zoufx.ai.agent.controller;
 
 import com.zoufx.ai.agent.assistant.ChatAssistant;
 import com.zoufx.ai.agent.model.ChatRequest;
+import com.zoufx.ai.agent.util.WebSearchEventHelper;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +19,8 @@ import java.util.Map;
 /**
  * AI 控制器 —— 基于 LangChain4J AiServices + TokenStream。
  * Controller 只做 HTTP 适配：assistant 路由、TokenStream 回调 → SSE 事件翻译。
+ * 支持的 SSE 事件：thinking / content / tool_call / tool_result / error。
+ * 网络检索相关的工具方法见 {@link WebSearchEventHelper}。
  */
 @Slf4j
 @RestController
@@ -58,6 +61,19 @@ public class AIChatController {
                             }
                         })
                         .onPartialResponse(ct -> sink.next(sse("content", ct)))
+                        .beforeToolExecution(evt -> {
+                            String name = evt.request().name();
+                            String query = WebSearchEventHelper.extractQuery(evt.request().arguments());
+                            log.info("Tool call start [sessionId={}] {} query={}", sessionId, name, query);
+                            sink.next(sse("tool_call", WebSearchEventHelper.toolCallPayload(name, query)));
+                        })
+                        .onToolExecuted(exec -> {
+                            String name = exec.request().name();
+                            String result = exec.result();
+                            int count = WebSearchEventHelper.countResults(result);
+                            log.info("Tool call done [sessionId={}] {} count={}", sessionId, name, count);
+                            sink.next(sse("tool_result", WebSearchEventHelper.toolResultPayload(name, count, result)));
+                        })
                         .onError(err -> {
                             log.error("Stream error [sessionId={}]", sessionId, err);
                             sink.next(sse("error", err.getMessage() != null ? err.getMessage() : "AI 服务异常，请稍后重试"));

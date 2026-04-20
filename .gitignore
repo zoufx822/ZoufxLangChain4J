@@ -34,3 +34,7 @@ target/
 
 # Worktrees
 .worktrees/
+
+# Local config（含 API keys）
+application-local.yml
+application-local.properties

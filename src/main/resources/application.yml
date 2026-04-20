@@ -6,11 +6,13 @@ logging:
     root: INFO
 
 spring:
+  profiles:
+    active: local
   ai:
     anthropic:
       base-url: https://api.minimaxi.com/anthropic/v1
-      # 安全提醒：生产环境应使用环境变量 ${MINIMAX_API_KEY} 替换此处明文，避免密钥泄露
-      api-key: sk-cp-8Msokvuwxf6wgrF7zHUd60kNiEeHqM2faSWCFF8w6VmS_q59wLbRa-KlDQLRZs0SJGcKzKQj9kpfb4rwJdFdW1YojVfao01zR9vZcb_8xp7BHX0i92lex84
+      # API key 在 application-local.yml 中配置（不上传 GitHub）
+      api-key: ${MINIMAX_API_KEY:}
       version: 2023-06-01
       chat:
         options:
@@ -19,3 +21,14 @@ spring:
           thinking:
             type: enabled
             budget-tokens: 8192
+
+langchain4j:
+  web-search:
+    enabled: true
+    tavily:
+      # 生产环境通过环境变量 TAVILY_API_KEY 注入；空值时自动降级关闭（不阻塞启动）
+      api-key: ${TAVILY_API_KEY:}
+      search-depth: basic      # basic / advanced
+      include-answer: true
+      max-results: 5
+      timeout: 20s
