@@ -42,13 +42,41 @@ public class WebSearchEventHelper {
 
     /**
      * 构建 tool_result 事件的 JSON payload。
+     * 手动转义特殊字符以确保 SSE 兼容性。
+     * 不能依赖 Jackson，因为 SSE 流中不应该有真实换行符。
      */
     public static String toolResultPayload(String tool, int count, String rawResult) {
-        ObjectNode node = MAPPER.createObjectNode();
-        node.put("tool", tool);
-        node.put("count", count);
-        node.put("resultPreview", truncate(rawResult, 200));
-        return node.toString();
+        String preview = truncate(rawResult, 200);
+        // 对 resultPreview 进行 JSON 转义
+        String escaped = escapeJsonString(preview);
+        // 直接使用字符串拼接，确保没有真实换行符进入 JSON
+        return String.format("{\"tool\":\"%s\",\"count\":%d,\"resultPreview\":\"%s\"}", tool, count, escaped);
+    }
+
+    /**
+     * 转义字符串以符合 JSON 标准和 SSE 要求。
+     */
+    private static String escapeJsonString(String s) {
+        if (s == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (char c : s.toCharArray()) {
+            switch (c) {
+                case '"': sb.append("\\\""); break;
+                case '\\': sb.append("\\\\"); break;
+                case '\b': sb.append("\\b"); break;
+                case '\f': sb.append("\\f"); break;
+                case '\n': sb.append("\\n"); break;
+                case '\r': sb.append("\\r"); break;
+                case '\t': sb.append("\\t"); break;
+                default:
+                    if (c < 32) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+            }
+        }
+        return sb.toString();
     }
 
     /**
