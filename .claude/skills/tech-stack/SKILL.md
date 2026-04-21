@@ -40,7 +40,7 @@ description: ZoufxAIAgent 项目前后端技术选型备忘。当用户提出任
 
 | 场景 | 优选方案 | 说明 |
 |------|----------|------|
-| *（待补充）* | *（待补充）* | — |
+| 网络检索 / 实时信息 | Tavily + LangChain4J `.tools()` | langchain4j-web-search-engine-tavily (1.11.0-beta19)；模型自主判断调用；支持 basic/advanced 深度、结果数配置；apiKey 缺失自动降级；SSE 新增 tool_call/tool_result 事件 |
 
 ---
 
