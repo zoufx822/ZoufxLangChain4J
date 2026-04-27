@@ -1,7 +1,41 @@
 {
   "permissions": {
     "allow": [
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080 || echo \"连接失败\")"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080 || echo \"连接失败\")",
+      "Bash(./mvnw -q compile)",
+      "Bash(mvn -q compile)",
+      "Bash(curl -s -o /dev/null -w \"backend:%{http_code}\\\\n\" http://localhost:8080/ai/chat -X OPTIONS)",
+      "Bash(curl -s -o /dev/null -w \"frontend:%{http_code}\\\\n\" http://localhost:3000)",
+      "Bash(xargs grep *)",
+      "Bash(curl -s http://localhost:8080 -w \"\\\\nHTTP Status: %{http_code}\\\\n\")",
+      "Bash(curl -s http://localhost:3000 -w \"\\\\nHTTP Status: %{http_code}\\\\n\")",
+      "Bash(curl -X POST http://localhost:8080/ai/chat -H 'Content-Type: application/json' -d '{\"prompt\": \"今天日期是多少?\", \"sessionId\": \"test-session-001\", \"thinking\": false}' -N)",
+      "Bash(curl -X POST http://localhost:8080/ai/chat -H 'Content-Type: application/json' -d '{\"prompt\":\"今天日期是多少?\",\"sessionId\":\"test-001\",\"thinking\":false}' -N)",
+      "Bash(timeout 5 cat)",
+      "Bash(curl -X POST http://localhost:8080/ai/chat -H 'Content-Type: application/json' -d '{\"prompt\":\"今天日期是多少?\",\"sessionId\":\"test-001\",\"thinking\":false}' -s)",
+      "Bash(mvn spring-boot:run -q)",
+      "Bash(mvn clean *)",
+      "Bash(netstat -tulpn)",
+      "Bash(curl -s http://localhost:8080/)",
+      "Bash(curl -v -X POST http://localhost:8080/ai/chat -H 'Content-Type: application/json' -d '{\"prompt\":\"今天日期是多少?\",\"sessionId\":\"test-001\",\"thinking\":false}')",
+      "Bash(curl -X POST http://localhost:8080/ai/chat -H 'Content-Type: application/json' -d '{ *)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /PID 11252 /F)",
+      "Bash(kill -9 11252)",
+      "Bash(mvn -f /e/ZoufxDemo/ZoufxAIAgent/pom.xml spring-boot:run -DskipTests -q)",
+      "Bash(curl -s http://localhost:3000/)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "Bash(curl -s -X POST http://localhost:8080/ai/chat -H 'Content-Type: application/json' -d '{\"prompt\":\"你好\",\"sessionId\":\"test-001\",\"thinking\":false}')",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "Bash(mvn spring-boot:run -DskipTests)",
+      "Bash(tee /tmp/backend_full.log)",
+      "mcp__plugin_playwright_playwright__browser_type",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "mcp__plugin_playwright_playwright__browser_click",
+      "mcp__plugin_playwright_playwright__browser_wait_for",
+      "mcp__plugin_playwright_playwright__browser_resize",
+      "mcp__plugin_playwright_playwright__browser_console_messages",
+      "mcp__plugin_playwright_playwright__browser_close"
     ]
   }
 }

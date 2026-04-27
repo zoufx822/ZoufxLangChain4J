@@ -8,6 +8,9 @@ import dev.langchain4j.web.search.WebSearchRequest;
 import dev.langchain4j.web.search.WebSearchResults;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 /**
@@ -16,6 +19,9 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 public class TavilySearchTool {
+
+    private static final DateTimeFormatter DATE_FMT =
+            DateTimeFormatter.ofPattern("yyyy 年 M 月 d 日", Locale.CHINA);
 
     private final WebSearchEngine engine;
     private final int maxResults;
@@ -46,13 +52,17 @@ public class TavilySearchTool {
         if (results == null) {
             return "网络检索暂时不可用，基于已有知识回答。";
         }
+        String today = LocalDate.now().format(DATE_FMT);
+        String header = "今日日期：" + today
+                + "\n（请核对下方结果中的日期，若与今日不符必须明确告知用户数据为何日，不得当作今日数据汇报）\n\n";
         if (results.results() == null || results.results().isEmpty()) {
-            return "未检索到相关结果";
+            return header + "未检索到相关结果";
         }
-        return results.results().stream()
+        String body = results.results().stream()
                 .limit(maxResults)
                 .map(r -> "- [" + safe(r.title()) + "](" + (r.url() == null ? "" : r.url().toString()) + ")\n  " + safe(r.snippet()))
                 .collect(Collectors.joining("\n"));
+        return header + body;
     }
 
     private WebSearchResults searchWithRetry(WebSearchRequest req, String query) {
