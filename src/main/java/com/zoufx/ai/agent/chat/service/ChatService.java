@@ -19,7 +19,6 @@ import com.zoufx.ai.agent.vector.model.RecallResult;
 import com.zoufx.ai.agent.vector.property.RecallProps;
 import com.zoufx.ai.agent.vector.support.VectorPayload;
 import com.zoufx.ai.agent.tool.support.ToolNameMap;
-import com.zoufx.ai.agent.tool.api.ToolPrompt;
 import com.zoufx.ai.agent.mood.service.MoodService;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.model.embedding.EmbeddingModel;
@@ -80,7 +79,6 @@ public class ChatService {
     private final MoodService moodService;
     private final ChatProps chatProps;
     /** 所有 @Tool 实现类，启动时反射扫描方法名 → section（中文名）映射。 */
-    private final List<ToolPrompt> tools;
     private final RecallService recallService;
     /**
      * 跨方法传递召回结果的 anchorId 级别 holder。

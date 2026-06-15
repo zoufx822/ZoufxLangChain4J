@@ -41,6 +41,7 @@ public class EmbeddingConfig {
     }
 
     /** Qdrant gRPC 客户端；AutoCloseable，Spring 关闭时自动 close。 */
+    @SuppressWarnings("null")
     @Bean(destroyMethod = "close")
     public QdrantClient qdrantClient(VectorStoreProps p) {
         QdrantGrpcClient.Builder b = QdrantGrpcClient.newBuilder(p.getHost(), p.getPort(), p.isUseTls());
@@ -64,6 +65,7 @@ public class EmbeddingConfig {
      * 幂等确保 collection 存在：不存在则按维度 + cosine 建；已存在则沿用。
      * 不做维度回查——换维度须先手动删除 collection 后重启重建。
      */
+    @SuppressWarnings("null")
     private void ensureCollection(QdrantClient client, VectorStoreProps p) throws Exception {
         if (Boolean.TRUE.equals(client.collectionExistsAsync(p.getCollection()).get())) {
             log.info("Qdrant collection '{}' already exists", p.getCollection());
