@@ -20,7 +20,7 @@ import java.util.List;
  * 抢在主推理流之前判出小Z 的"第一反应情绪"，让前端头像立刻变脸（开口前先把情绪挂脸上）。
  *
  * <p>判断带上本锚点最近的对话窗口：新消息放进上下文里理解（上一句还在倾诉、这句只回「嗯」时
- * 不会被孤立判成平静）。复用 {@code fastSyncChatModel}（快档轻量同步），整条调用包在 boundedElastic
+ * 不会被孤立判成平静）。复用 {@code syncChatModel}（轻量同步档），整条调用包在 boundedElastic
  * 上，绝不碰 event loop。窗口加载与主流并行，不进主流关键路径，首次变脸仍早于主流 TTFT。
  *
  * <p>失败语义有别：模型有响应但输出杂乱 → {@link Moods#normalize} 回落「平静」；
@@ -62,7 +62,7 @@ public class MoodService {
             ---
             """;
 
-    @Qualifier("fastSyncChatModel")
+    @Qualifier("syncChatModel")
     private final ChatModel chatModel;
 
     /** 异常/超时吞掉为 empty，不发情绪事件、不影响主流。 */

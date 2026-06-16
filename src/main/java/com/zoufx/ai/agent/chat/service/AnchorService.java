@@ -45,7 +45,7 @@ public class AnchorService {
     /** 摘要超过此字符数被截断——防止个别极端 LLM 输出撑爆 prompt 注入预算。 */
     private static final int SUMMARY_MAX_CHARS = 400;
 
-    @Qualifier("fastSyncChatModel")
+    @Qualifier("syncChatModel")
     private final ChatModel chatModel;
     private final ChatMemoryDao chatMemoryDao;
     private final AnchorMemoryDao anchorMemoryDao;

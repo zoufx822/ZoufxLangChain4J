@@ -26,20 +26,21 @@ Hot Memory 含三种 type（v0.14）：`user-impression`（用户画像，UPSERT
 
 ### 模型 Bean 角色（按项目需求定义，跨 profile 统一命名）
 
-模型角色按项目业务需求定义（而非映射各厂商参数空间），每个 profile Config 负责把角色映射到自家实现：
+模型角色按项目业务需求定义（而非映射各厂商参数空间），每个 profile Config 负责把角色映射到自家实现。每 profile 装两个角色 Bean：
 
 | 角色 Bean | 用途 | deepseek-v4 | MiniMax-M3 |
 |---|---|---|---|
-| `thinkingStreamingChatModel`（流式） | 前端开思考 | pro + thinking enabled + effort max | adaptive |
-| `fastStreamingChatModel`（流式） | 前端关思考 | flash + thinking disabled | disabled |
-| `fastSyncChatModel`（同步） | 情绪分类 + 摘要压缩 | flash + thinking disabled | disabled |
+| `streamingChatModel`（流式） | 对话主路 | 1 个，思考/快档由 per-call 参数切（pro+max+enabled / flash+disabled） | 端口内建 2 个，adaptive / disabled |
+| `syncChatModel`（同步） | 情绪分类 + 摘要压缩 | flash + thinking disabled | disabled |
 
 每档模型 ID 由 `ai.llm.<profile>.chat.thinking-model / fast-model` 配置（MiniMax M3 两档同模型同值，靠 thinking 参数区分）。
 
-`AssistantConfig` 据此装配两个 `ChatAssistant`（thinking / fast），共享同一 ChatMemoryProvider，切档不丢上下文。前端思考开关 on→thinking、off→fast，纯布尔透传。
+**前端思考开关 → 后端路由：** ChatService 只依赖 `StreamingChatPort.stream(anchorId, prompt, thinking)`，profile 间的 per-call 能力差异被端口屏蔽。`AssistantFactory`（`chat/support`）从一个 `StreamingChatModel` 装一个 `ChatAssistant`（共享 ChatMemoryProvider + 动态 system prompt + 工具集），profile-agnostic 部分集中于此。两 profile 的端口实现各自调它：
 
-> 已知限制：LC4J 1.13.1 AiServices 不支持 per-call `ChatRequestParameters`，thinking 参数只能 builder 期固定——这是"每档一个 assistant"的根因，也是前端只做布尔开关、不做模型参数级控件的原因。上游支持后可收敛为单 assistant + per-call 参数。
-> 注意：所有模型 Bean 统一开 `returnThinking + sendThinking`——多档共享会话记忆，上一轮思考档产出的 reasoning/thinking 内容必须在后续轮次（即使走快档）原样回传，否则 DeepSeek API 拒绝、MiniMax 工具调用行为异常。
+- **DeepSeek（OpenAI 协议）**：OpenAI 支持 per-call `OpenAiChatRequestParameters`，故只装 1 个 `streamingChatModel` + 1 个 assistant；思考/快档差异（模型名 + reasoning_effort + `thinking` 私有字段经 `customParameters`）由端口按请求现场拼参数覆盖。
+- **MiniMax（Anthropic 协议）**：LC4J 1.13.1 的 Anthropic 无 per-call 参数载体（无 `AnthropicChatRequestParameters`，thinking 只能 builder 期定），故端口内建思考/快档两个模型 + 两个 assistant，按 thinking 选其一、per-call 参数传 EMPTY。
+
+> 注意：所有模型 Bean 统一开 `returnThinking + sendThinking`——思考/快档共享会话记忆，上一轮思考档产出的 reasoning/thinking 内容必须在后续轮次（即使走快档）原样回传，否则 DeepSeek API 拒绝、MiniMax 工具调用行为异常。
 
 ## 后端开发约束（WebFlux）
 

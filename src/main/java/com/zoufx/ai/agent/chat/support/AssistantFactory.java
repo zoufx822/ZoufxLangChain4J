@@ -1,4 +1,4 @@
-package com.zoufx.ai.agent.chat.config;
+package com.zoufx.ai.agent.chat.support;
 
 import com.zoufx.ai.agent.chat.api.ChatAssistant;
 import com.zoufx.ai.agent.prompt.support.PromptComposer;
@@ -11,45 +11,28 @@ import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.stereotype.Component;
 
 /**
- * 装配两个 {@link ChatAssistant} Bean，分别绑定当前激活 profile 的流式模型角色：
- * thinkingStreamingChatModel（思考档，前端开思考）/ fastStreamingChatModel（快档，前端关思考）。
+ * 从一个 {@link StreamingChatModel} 装出一个 {@link ChatAssistant}，统一挂载共享的会话记忆、
+ * 动态 system prompt 与工具集——profile 无关的部分集中在此，避免各 profile Config 重复布线。
  *
- * <p>LC4J AiServices 不支持 per-call 参数覆盖，thinking 策略只能在模型 builder 期固定，
- * 因此每档一个 assistant，由 ChatService 按请求的 thinking 开关路由。两个 assistant 共享同一
- * ChatMemoryProvider（同 anchorId 同记忆），切档不丢上下文。
- *
- * <p>System prompt 由 {@link PromptComposer} 按 Prompt 序列动态组装。
+ * <p>每个 profile 按自身需要调用 {@link #create}：能 per-call 切 thinking 的建一个，
+ * 不能的建两个（思考档 / 快档各一个模型）。
  */
-@Configuration
+@Component
 @RequiredArgsConstructor
-public class AssistantConfig {
+public class AssistantFactory {
 
     private final ChatMemoryProvider chatMemoryProvider;
+    private final PromptComposer composer;
     private final TavilySearchTool tavilySearchTool;
     private final ColdMemorySearchTool coldMemorySearchTool;
     private final UserImpressionUpdateTool userImpressionUpdateTool;
     private final SignificantEventRecordTool significantEventRecordTool;
     private final CommitmentRecordTool commitmentRecordTool;
-    private final PromptComposer composer;
 
-    @Bean("thinkingAssistant")
-    public ChatAssistant thinkingAssistant(
-            @Qualifier("thinkingStreamingChatModel") StreamingChatModel thinkingStreamingChatModel) {
-        return build(thinkingStreamingChatModel);
-    }
-
-    @Bean("fastAssistant")
-    public ChatAssistant fastAssistant(
-            @Qualifier("fastStreamingChatModel") StreamingChatModel fastStreamingChatModel) {
-        return build(fastStreamingChatModel);
-    }
-
-    private ChatAssistant build(StreamingChatModel chatModel) {
+    public ChatAssistant create(StreamingChatModel chatModel) {
         return AiServices.builder(ChatAssistant.class)
                 .streamingChatModel(chatModel)
                 .chatMemoryProvider(chatMemoryProvider)

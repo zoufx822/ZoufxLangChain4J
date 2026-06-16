@@ -1,7 +1,7 @@
 package com.zoufx.ai.agent.chat.service;
 
 import com.zoufx.ai.agent.base.support.Blocking;
-import com.zoufx.ai.agent.chat.api.ChatAssistant;
+import com.zoufx.ai.agent.chat.api.StreamingChatPort;
 import com.zoufx.ai.agent.chat.property.ChatProps;
 import com.zoufx.ai.agent.memory.api.AnchorMemoryDao;
 import com.zoufx.ai.agent.memory.api.ChatMemoryDao;
@@ -30,7 +30,6 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
@@ -70,12 +69,8 @@ public class ChatService {
     /** 自动 backfill title 时取首条用户消息的最大字符数。 */
     private static final int AUTO_TITLE_MAX_LEN = 20;
 
-    /** 思考档（如 DeepSeek pro+max / MiniMax adaptive）：前端开启思考时的对话主路。 */
-    @Qualifier("thinkingAssistant")
-    private final ChatAssistant thinkingAssistant;
-    /** 快档（thinking 关闭）：前端关闭思考时的对话主路。 */
-    @Qualifier("fastAssistant")
-    private final ChatAssistant fastAssistant;
+    /** 流式对话端口：按 thinking 开关路由到合适的模型/参数，屏蔽 profile 间的 per-call 能力差异。 */
+    private final StreamingChatPort streamingChatPort;
     /** LC4J AiServices 管理的会话消息历史（按 anchorId 分桶）。 */
     private final ChatMemoryDao chatMemoryDao;
     /** 锚点（对话会话）的 CRUD——创建、touch、title backfill。 */
@@ -105,9 +100,8 @@ public class ChatService {
      * 前端收到后更新 URL 中的 anchorId。
      */
     public Flux<ChatEvent> chat(@Nullable String anchorId, String prompt, boolean thinking, String userId) {
-        ChatAssistant assistant = thinking ? thinkingAssistant : fastAssistant;
         return Blocking.call(() -> prepare(userId, anchorId, prompt))
-                .flatMapMany(p -> buildStream(assistant, p, userId, prompt))
+                .flatMapMany(p -> buildStream(thinking, p, userId, prompt))
                 .onErrorResume(err -> {
                     log.error("Chat prepare failed [userId={}]", userId, err);
                     return Flux.just(new ChatEvent("error", "会话初始化失败，请稍后重试"));
@@ -163,7 +157,7 @@ public class ChatService {
      *
      * <p>instant 支失败静默不发射（情绪是辅助能力）；main 支重试仅限首次 emit 前。
      */
-    private Flux<ChatEvent> buildStream(ChatAssistant assistant, ChatPrepared prepared, String userId, String prompt) {
+    private Flux<ChatEvent> buildStream(boolean thinking, ChatPrepared prepared, String userId, String prompt) {
         String anchorId = prepared.anchorId();
         // instant / main 两支并发写同一批状态变量，必须用线程安全类型
         AtomicBoolean hasEmitted = new AtomicBoolean(false);   // 重试守门：收到首条 token 后禁止再重试
@@ -184,7 +178,7 @@ public class ChatService {
         // subscribeOn 必须在 retryWhen 之前：retryWhen 默认在 parallel 调度器重新订阅，
         // 显式 subscribeOn(boundedElastic) 才能让重试也跑在 boundedElastic 上
         Flux<ChatEvent> main = Flux.<ChatEvent>create(sink ->
-                        startTokenStream(sink, assistant, anchorId, userId, prompt, hasEmitted, inlineMoods))
+                        startTokenStream(sink, thinking, anchorId, userId, prompt, hasEmitted, inlineMoods))
                 .subscribeOn(Schedulers.boundedElastic())
                 .retryWhen(buildRetrySpec(hasEmitted));
 
@@ -225,12 +219,12 @@ public class ChatService {
      *
      * <p>LC4J 回调跑在框架线程，与 event loop 隔离；{@code hasEmitted} 首次回调时置位，供重试策略判断。
      */
-    private void startTokenStream(FluxSink<ChatEvent> sink, ChatAssistant assistant,
+    private void startTokenStream(FluxSink<ChatEvent> sink, boolean thinking,
                                   String anchorId, String userId, String prompt,
                                   AtomicBoolean hasEmitted, List<String> inlineMoods) {
         final MoodEventProcessor moodStripper = new MoodEventProcessor(sink, userId);
 
-        assistant.chat(anchorId, prompt)
+        streamingChatPort.stream(anchorId, prompt, thinking)
                 .onPartialThinking(pt -> {
                     hasEmitted.set(true);
                     if (pt != null && pt.text() != null) {
