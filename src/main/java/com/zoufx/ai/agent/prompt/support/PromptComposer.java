@@ -1,8 +1,7 @@
 package com.zoufx.ai.agent.prompt.support;
 
 import com.zoufx.ai.agent.base.support.DateFormats;
-import com.zoufx.ai.agent.prompt.api.Piece;
-import com.zoufx.ai.agent.memory.api.AnchorMemoryDao;
+import com.zoufx.ai.agent.prompt.api.Prompt;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
@@ -13,18 +12,16 @@ import java.util.List;
 import java.util.function.Function;
 
 /**
- * System prompt 编排器。
+ * System prompt 编排器——按 {@link Prompt#order()} 升序串行调用各段，拼接为完整 system prompt。
  *
- * <p>构造注入所有 {@link Piece} Bean，按 {@code order} 升序串行调用
- * {@link Piece#render} 拼接为完整 system prompt。顶部"当前日期"一行由本类直接注入，
- * 不走 Section。末尾追加锚定行防止长对话中人设漂移。
+ * <p>顶部"当前日期"一行由本类直接注入，不走 Prompt。末尾追加锚定行防止长对话中人设漂移。
  *
  * <p><b>Frozen Snapshot 约束</b>：{@link #compose(String)} 由 LC4J 作为 SystemMessageProvider
- * 在每次请求开始时同步内联调用 <b>一次</b>——单请求内 prompt 自然冻结。禁止在响应流中途
- * 重新调用，否则会破坏"Hot Memory 修改要到下次请求才生效"的语义。
+ * 在每次请求开始时同步内联调用<b>一次</b>——单请求内 prompt 自然冻结。
  *
- * <p><b>线程约束</b>：compose 在 WebFlux event loop 上执行，所有 Piece 实现
- * 必须用同步 Store 签名，禁止 {@code .block()}。
+ * <p><b>线程约束</b>：compose 在 WebFlux event loop 上执行；所有数据由
+ * {@code ChatService.prepare()} 在 boundedElastic 上预加载至 {@link PromptContextHolder}，
+ * compose() 只做纯内存读，不触碰任何 DB / 网络。
  */
 @Slf4j
 @Component
@@ -37,14 +34,14 @@ public class PromptComposer {
             不需要为此向对方解释或道歉，只需自然地纠正。
             """;
 
-    private final List<Piece> sections;
-    private final AnchorMemoryDao anchorMemoryDao;
+    private final List<Prompt> sections;
+    private final PromptContextHolder contextHolder;
 
-    public PromptComposer(List<Piece> sections, AnchorMemoryDao anchorMemoryDao) {
+    public PromptComposer(List<Prompt> sections, PromptContextHolder contextHolder) {
         this.sections = sections.stream()
-                .sorted(Comparator.comparingInt(Piece::order))
+                .sorted(Comparator.comparingInt(Prompt::order))
                 .toList();
-        this.anchorMemoryDao = anchorMemoryDao;
+        this.contextHolder = contextHolder;
     }
 
     public Function<Object, String> asProvider() {
@@ -52,17 +49,17 @@ public class PromptComposer {
     }
 
     public String compose(@Nullable String anchorId) {
-        String userId = anchorId != null ? anchorMemoryDao.findUserId(anchorId) : null;
+        PromptContext ctx = anchorId != null ? contextHolder.get(anchorId) : null;
 
         StringBuilder sb = new StringBuilder();
         sb.append("当前日期：").append(LocalDate.now().format(DateFormats.CN_LONG_DATE)).append("\n\n");
 
-        for (Piece sec : sections) {
+        for (Prompt sec : sections) {
             String rendered;
             try {
-                rendered = sec.render(userId, anchorId);
+                rendered = sec.render(ctx);
             } catch (Exception e) {
-                log.error("Piece {} render failed, section skipped (anchorId={})",
+                log.error("Prompt {} render failed, section skipped (anchorId={})",
                         sec.getClass().getSimpleName(), anchorId, e);
                 continue;
             }

@@ -3,6 +3,7 @@ package com.zoufx.ai.agent.memory.impl;
 import com.zoufx.ai.agent.base.support.Blocking;
 import com.zoufx.ai.agent.memory.api.AnchorMemoryDao;
 import com.zoufx.ai.agent.memory.api.ChatMemoryDao;
+import com.zoufx.ai.agent.memory.support.ChatRequestRegistry;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
@@ -49,6 +50,7 @@ public class ChatMemoryDaoImpl implements ChatMemoryDao {
     @Qualifier("memoryTxTemplate")
     private final TransactionTemplate tx;
     private final AnchorMemoryDao anchorMemoryDao;
+    private final ChatRequestRegistry chatRequestRegistry;
 
     @PostConstruct
     public void init() {
@@ -206,16 +208,41 @@ public class ChatMemoryDaoImpl implements ChatMemoryDao {
         return msg;
     }
 
+    /**
+     * 扫描消息列表，找到最后一对相邻 UserMessage 并移除后者（重试产生的重复条目）。
+     * 若不存在相邻 UserMessage 则原样返回。
+     */
+    private static List<ChatMessage> deduplicateConsecutiveUserMessages(List<ChatMessage> messages) {
+        for (int i = messages.size() - 1; i > 0; i--) {
+            if (messages.get(i) instanceof dev.langchain4j.data.message.UserMessage
+                    && messages.get(i - 1) instanceof dev.langchain4j.data.message.UserMessage) {
+                List<ChatMessage> result = new ArrayList<>(messages);
+                result.remove(i);
+                return result;
+            }
+        }
+        return messages;
+    }
+
     private void saveByAnchorId(String anchorId, List<ChatMessage> messages) {
+        // 重试去重：同一请求首次写 UserMessage 后，LC4J 重试会再写一次形成相邻重复——
+        // tryClaimFirstWrite 首次返 true（放行），重试返 false（去重）
+        List<ChatMessage> effective = chatRequestRegistry.tryClaimFirstWrite(anchorId)
+                ? messages
+                : deduplicateConsecutiveUserMessages(messages);
+        if (effective.size() < messages.size()) {
+            log.info("Retry dedup: removed duplicate UserMessage [anchorId={}]", anchorId);
+        }
+
         String userId = anchorMemoryDao.findUserId(anchorId);
         if (userId == null) {
             throw new IllegalStateException("Unknown anchorId: " + anchorId
                     + " — anchor row must exist before chat_memory writes");
         }
         // 持久化前剥离 AiMessage 文本中的 mood 标签到独立 mood 列
-        List<String> moods = new ArrayList<>(messages.size());
-        List<ChatMessage> cleaned = new ArrayList<>(messages.size());
-        for (ChatMessage msg : messages) {
+        List<String> moods = new ArrayList<>(effective.size());
+        List<ChatMessage> cleaned = new ArrayList<>(effective.size());
+        for (ChatMessage msg : effective) {
             cleaned.add(stripMoodAndClean(msg, moods::add));
         }
         long base = System.currentTimeMillis();

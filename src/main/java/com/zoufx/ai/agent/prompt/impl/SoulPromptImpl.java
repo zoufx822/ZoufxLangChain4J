@@ -1,8 +1,7 @@
 package com.zoufx.ai.agent.prompt.impl;
 
-import com.zoufx.ai.agent.prompt.api.Piece;
-import com.zoufx.ai.agent.memory.api.SoulDao;
-import lombok.RequiredArgsConstructor;
+import com.zoufx.ai.agent.prompt.api.Prompt;
+import com.zoufx.ai.agent.prompt.support.PromptContext;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -12,13 +11,10 @@ import java.util.Map;
  * 「## 关于你自己」段（order=10）——注入 AI 自身人格 / 风格 / 原则 / 反模式 / 一致性原则 / 小习惯。
  *
  * <p>渲染顺序硬编码：role → name/tone → principles → forbidden_patterns → consistency_principles → quirks，
- * 直接从 {@code SoulDao.snapshot()} 取值，缺值字段自然跳过。
+ * 直接从 {@code ctx.soulSnap()} 取值，缺值字段自然跳过。
  */
 @Component
-@RequiredArgsConstructor
-public class SoulPieceImpl implements Piece {
-
-    private final SoulDao soulDao;
+public class SoulPromptImpl implements Prompt {
 
     @Override
     public int order() {
@@ -27,8 +23,8 @@ public class SoulPieceImpl implements Piece {
 
     @Override
     @Nullable
-    public String render(@Nullable String userId, @Nullable String anchorId) {
-        Map<String, String> snap = soulDao.snapshot();
+    public String render(@Nullable PromptContext ctx) {
+        Map<String, String> snap = ctx != null ? ctx.soulSnap() : Map.of();
         if (snap.isEmpty()) return null;
 
         StringBuilder sb = new StringBuilder("## 关于你自己\n\n");
@@ -45,10 +41,10 @@ public class SoulPieceImpl implements Piece {
         } else if (tone != null && !tone.isBlank()) {
             sb.append("你的说话风格是：").append(tone).append("。\n\n");
         }
-        appendBlock(sb, snap, "principles",              "你坚持以下表达原则：");
-        appendBlock(sb, snap, "forbidden_patterns",      "你**绝不**使用以下表达：");
-        appendBlock(sb, snap, "consistency_principles",  "你坚持以下**一致性原则**：");
-        appendBlock(sb, snap, "quirks",                  "你有以下小习惯（自然流露即可，不要刻意）：");
+        appendBlock(sb, snap, "principles",             "你坚持以下表达原则：");
+        appendBlock(sb, snap, "forbidden_patterns",     "你**绝不**使用以下表达：");
+        appendBlock(sb, snap, "consistency_principles", "你坚持以下**一致性原则**：");
+        appendBlock(sb, snap, "quirks",                 "你有以下小习惯（自然流露即可，不要刻意）：");
         int headerLen = "## 关于你自己\n\n".length();
         return sb.length() > headerLen ? sb.toString() : null;
     }

@@ -11,7 +11,7 @@ import java.util.Map;
  * <p>与 Memory Stream（Cold Archive）并行写入，不互相派生：Hot 由 LLM 通过 {@code @Tool} 主动晶化，
  * Cold 自动 append 每轮对话原文。
  *
- * <p>同步方法供已允许阻塞的调用方（Piece / {@code @Tool} 线程 / boundedElastic）；
+ * <p>同步方法供已允许阻塞的调用方（Prompt / {@code @Tool} 线程 / boundedElastic）；
  * {@code snapshotAsync} 供 WebFlux Controller 反应式串接。
  */
 public interface HotMemoryDao {

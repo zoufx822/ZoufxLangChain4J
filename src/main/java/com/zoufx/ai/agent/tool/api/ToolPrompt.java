@@ -4,7 +4,7 @@ import java.util.Map;
 
 /**
  * 工具的 prompt 契约——每个工具自带使用说明（何时调用 / 调用规则），
- * 由 {@code ToolsPieceImpl} 聚合拼入 system prompt。
+ * 由 {@code ToolsPromptImpl} 聚合拼入 system prompt。
  */
 public interface ToolPrompt {
 

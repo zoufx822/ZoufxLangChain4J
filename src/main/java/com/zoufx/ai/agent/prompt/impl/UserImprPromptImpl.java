@@ -1,11 +1,9 @@
 package com.zoufx.ai.agent.prompt.impl;
 
-import com.zoufx.ai.agent.prompt.api.Piece;
-import com.zoufx.ai.agent.memory.api.HotMemoryDao;
-import com.zoufx.ai.agent.memory.support.HotMemoryType;
+import com.zoufx.ai.agent.prompt.api.Prompt;
+import com.zoufx.ai.agent.prompt.support.PromptContext;
 import com.zoufx.ai.agent.memory.support.UserImpressionFields;
 import com.zoufx.ai.agent.memory.support.UserImpressionFields.FieldSpec;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
@@ -24,8 +22,7 @@ import java.util.Map;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
-public class UserImprPieceImpl implements Piece {
+public class UserImprPromptImpl implements Prompt {
 
     private static final String CLOSENESS_HEADER = "## 你对对方的了解程度\n\n";
     private static final String STRANGER = "stranger";
@@ -38,6 +35,7 @@ public class UserImprPieceImpl implements Piece {
             - ==优先==：若对方本轮主动提供了任何画像信息（自报名字、职业、爱好等），立刻调 update_user_impression 写入，再继续回复——不能只口头确认而不调工具
             - 先把对方这句话本身聊好（不打断、不绕题、有来有回）
             - 出于真实的好奇了解 ta：==只在对话出现自然话口时==顺势问一句（系统这轮想了解的是：{fieldQuestion}）；没有合适话口就这轮不问——别硬塞、别每轮都问、别连珠炮追问
+            - ==首次交谈例外==：若这是你们第一次说话（chat memory 为空）且你还不知道怎么称呼对方，则无论对方说什么、有没有自然话口，都在回应之后自然地补问一次怎么称呼——这是破冰的起点，不算硬塞
             - 若 chat memory 显示你之前已问过该字段且对方没正面答，或对方明确表示不想说（"不用问""没必要"等），==就别再追问==
             - 面对"情感 / 人生 / 选择"等深度话题：==先给出有温度、有分量的回应==（共情 + 你的真实想法），再在自然处流露想多了解 ta 处境的好奇——==不要==用"我们刚认识，先了解你再给意见"把对方挡回去
             基调：你是因为==真的对这个人感兴趣==才想了解 ta，不是在完成一张信息收集表。
@@ -59,8 +57,6 @@ public class UserImprPieceImpl implements Piece {
     private static final double STRANGER_THRESHOLD = 0.3;
     private static final double FULLY_KNOWN_THRESHOLD = 0.7;
 
-    private final HotMemoryDao hotMemoryDao;
-
     @Override
     public int order() {
         return 20;
@@ -68,9 +64,9 @@ public class UserImprPieceImpl implements Piece {
 
     @Override
     @Nullable
-    public String render(@Nullable String userId, @Nullable String anchorId) {
-        if (userId == null) return null;
-        Map<String, String> snap = hotMemoryDao.snapshot(userId, HotMemoryType.USER_IMPRESSION);
+    public String render(@Nullable PromptContext ctx) {
+        if (ctx == null || ctx.userId() == null) return null;
+        Map<String, String> snap = ctx.hotImpressionSnap();
 
         StringBuilder sb = new StringBuilder();
         renderImpression(sb, snap);
@@ -109,7 +105,7 @@ public class UserImprPieceImpl implements Piece {
         String mode = resolveMode(fillRatio);
         String template = promptForMode(mode);
         if (template == null) {
-            log.warn("UserImprPieceImpl closeness skipped: no prompt for mode={} (fillRatio={})",
+            log.warn("UserImprPromptImpl closeness skipped: no prompt for mode={} (fillRatio={})",
                     mode, fillRatio);
             return;
         }
@@ -150,6 +146,6 @@ public class UserImprPieceImpl implements Piece {
             }
         }
         throw new IllegalStateException(
-                "UserImprPieceImpl.buildFieldQuestion 在 stranger mode 下未找到未填字段，请检查 UserImpressionFields.FIELDS 定义");
+                "UserImprPromptImpl.buildFieldQuestion 在 stranger mode 下未找到未填字段，请检查 UserImpressionFields.FIELDS 定义");
     }
 }

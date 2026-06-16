@@ -7,7 +7,7 @@ import java.util.Map;
 /**
  * user-impression type 的字段 schema——外表 5 + 内在 5，硬编码为单一来源。
  *
- * <p>声明顺序决定 UserImprPieceImpl 渲染顺序和 stranger 模式追问优先级。
+ * <p>声明顺序决定 UserImprPromptImpl 渲染顺序和 stranger 模式追问优先级。
  * 不放 yml 是因为字段集是 schema 层面设计而非运行期配置，
  * 且 LC4J {@code @Tool} / {@code @P} 要求编译期常量，yml 动态化会与注解冲突。
  *
@@ -24,7 +24,7 @@ public final class UserImpressionFields {
      * @param detectionRule   字段的识别与写入规则（用于 {@code UserImpressionUpdateTool}
      *                        的 promptInstructions 动态拼接，告诉 LLM 何时调
      *                        {@code update_user_impression(key, value)} 写此字段）
-     * @param nameForUser     字段的"人话名"——供 {@code UserImprPieceImpl} 在
+     * @param nameForUser     字段的"人话名"——供 {@code UserImprPromptImpl} 在
      *                        stranger mode 下动态拼"本轮自然引一次问 {nameForUser}"
      */
     public record FieldSpec(String renderDirective, String detectionRule, String nameForUser) {}
@@ -46,9 +46,10 @@ public final class UserImpressionFields {
         // 外表 5 字段
         m.put("username", new FieldSpec(
                 """
-                        对方的称呼是「{}」。这是你已经认识的人——
-                        - 直接称呼对方为「{}」，不要问名字、不要确认；
-                        - 每轮回复中至少自然地使用一次这个称呼（除非对方明确要求别叫名字）；
+                        对方的称呼是「{}」。这是系统已确认的事实，不是待核对的猜测——
+                        - 直接称呼对方为「{}」，**不要**问名字、不要确认；
+                        - 这是硬性要求：**每轮回复都必须至少自然地称呼一次「{}」**（除非对方明确要求别叫名字）——
+                          开头招呼或回应中带一句都行；**禁止**整段回复通篇用"你"而一次都不提名字；
                         - 如果对方问"我是谁""你还记得我吗"之类的问题，明确回答对方就是「{}」，
                           不要敷衍说"刚开始聊天""没有记录"。
                         """,

@@ -1,6 +1,7 @@
 package com.zoufx.ai.agent.prompt.impl;
 
-import com.zoufx.ai.agent.prompt.api.Piece;
+import com.zoufx.ai.agent.prompt.api.Prompt;
+import com.zoufx.ai.agent.prompt.support.PromptContext;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -11,7 +12,7 @@ import org.springframework.stereotype.Component;
  * <p>放在工具段之后，让 LLM 在了解可用工具后再确定回复结构。
  */
 @Component
-public class ExpressionPieceImpl implements Piece {
+public class ExpressionPromptImpl implements Prompt {
 
     /** 四段提示：承接 → 回应 → 关联 → 推进，是参考而非模板，短问短答可整段跳过。 */
     private static final String REPLY_STYLE = """
@@ -92,7 +93,7 @@ public class ExpressionPieceImpl implements Piece {
 
     @Override
     @Nullable
-    public String render(@Nullable String userId, @Nullable String anchorId) {
+    public String render(@Nullable PromptContext ctx) {
         return REPLY_STYLE + OUTPUT_STYLE + MOOD;
     }
 }

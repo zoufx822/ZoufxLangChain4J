@@ -1,9 +1,8 @@
 package com.zoufx.ai.agent.prompt.impl;
 
-import com.zoufx.ai.agent.prompt.api.Piece;
-import com.zoufx.ai.agent.memory.api.AnchorMemoryDao;
+import com.zoufx.ai.agent.prompt.api.Prompt;
+import com.zoufx.ai.agent.prompt.support.PromptContext;
 import com.zoufx.ai.agent.memory.model.AnchorMemory;
-import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -19,13 +18,10 @@ import java.util.List;
  * 全部锚点 summary 都为空时跳过本段。
  */
 @Component
-@RequiredArgsConstructor
-public class AnchorPieceImpl implements Piece {
+public class AnchorPromptImpl implements Prompt {
 
     /** 最多注入的其他锚点条数——按 last_active_at desc 取头部。 */
     private static final int INJECT_LIMIT = 5;
-
-    private final AnchorMemoryDao anchorMemoryDao;
 
     @Override
     public int order() {
@@ -34,10 +30,10 @@ public class AnchorPieceImpl implements Piece {
 
     @Override
     @Nullable
-    public String render(@Nullable String userId, @Nullable String anchorId) {
-        if (userId == null || anchorId == null) return null;
+    public String render(@Nullable PromptContext ctx) {
+        if (ctx == null || ctx.userId() == null) return null;
 
-        List<AnchorMemory> others = anchorMemoryDao.listOtherAnchors(userId, anchorId);
+        List<AnchorMemory> others = ctx.otherAnchors();
         if (others.isEmpty()) {
             return "## 你与对方此前的其他交谈\n\n暂无可参考的交谈摘要。对方提及过往时，以「此刻想起的相关记忆」和记忆检索的结果为准——**不要**凭空编造「我们之前聊过 X」或「你之前提到过 Y」。\n\n";
         }

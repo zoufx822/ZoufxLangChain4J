@@ -1,10 +1,9 @@
 package com.zoufx.ai.agent.prompt.impl;
 
-import com.zoufx.ai.agent.prompt.api.Piece;
-import com.zoufx.ai.agent.vector.support.RecallContextHolder;
+import com.zoufx.ai.agent.prompt.api.Prompt;
+import com.zoufx.ai.agent.prompt.support.PromptContext;
 import com.zoufx.ai.agent.vector.model.RecallResult;
 import com.zoufx.ai.agent.vector.support.VectorPayload;
-import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -13,17 +12,15 @@ import java.util.List;
 /**
  * 「## 此刻想起的相关记忆」段（order=45，system prompt 末段——置末保 prefix cache）。
  *
- * <p>内容由 {@code ChatService} 召回后预算好塞进 {@link RecallContextHolder}；本段只做一次同步
- * {@code Map.get}（符合 compose 同步契约，不阻塞）。召回内容每请求重算、绝不落 chat_memory 窗口。
+ * <p>内容由 {@code ChatService.prepare()} 召回后预算好存入 {@link PromptContext#recallBlock()}；
+ * 本段只做一次同步字段读取（符合 compose 同步契约，不阻塞）。
+ * 召回内容每请求重算、绝不落 chat_memory 窗口。
  */
 @Component
-@RequiredArgsConstructor
-public class RecallPieceImpl implements Piece {
+public class RecallPromptImpl implements Prompt {
 
     /** 单条内容截断上限（受限即驱动，控常驻注意力）。 */
     private static final int MAX_ITEM_LEN = 120;
-
-    private final RecallContextHolder holder;
 
     @Override
     public int order() {
@@ -32,14 +29,14 @@ public class RecallPieceImpl implements Piece {
 
     @Override
     @Nullable
-    public String render(@Nullable String userId, @Nullable String anchorId) {
-        if (anchorId == null) return null;
-        String block = holder.get(anchorId);
-        return (block == null || block.isBlank()) ? null : block;
+    public String render(@Nullable PromptContext ctx) {
+        if (ctx == null) return null;
+        String block = ctx.recallBlock();
+        return block.isBlank() ? null : block;
     }
 
     /**
-     * 把召回结果渲染成段；空则返回 ""。由 ChatService 在 boundedElastic 上预算后塞 holder。
+     * 把召回结果渲染成段；空则返回 ""。由 ChatService 在 boundedElastic 上预算后存入 PromptContext。
      * 条数已由召回 limit 控制，这里只做单条截断。
      */
     public static String format(List<RecallResult> hits) {
@@ -54,7 +51,6 @@ public class RecallPieceImpl implements Piece {
     }
 
     private static String label(String memType) {
-        // cold（对话原文）不加前缀；hot 三类加「[类型] 」
         return VectorPayload.COLD.equals(memType) ? "" : "[" + VectorPayload.labelOf(memType) + "] ";
     }
 

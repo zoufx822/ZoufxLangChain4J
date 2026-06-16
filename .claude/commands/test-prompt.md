@@ -1,14 +1,14 @@
 # /test-prompt — System Prompt 编排的 Prompt-Behavior 系统测试
 
-验证 `PromptComposer` + 所有 `Piece` 实现注入的每条 directive 是否==真的驱动了 LLM 行为==。专治"prompt 文本看着对、LLM 行为却不对"的盲区——比如 v0.13 SOUL principles 那条"陌生人问称呼"软语气被 LLM 默默忽略，结构验证全过，跑了多轮才发现。
+验证 `PromptComposer` + 所有 `Prompt` 实现注入的每条 directive 是否==真的驱动了 LLM 行为==。专治"prompt 文本看着对、LLM 行为却不对"的盲区——比如 v0.13 SOUL principles 那条"陌生人问称呼"软语气被 LLM 默默忽略，结构验证全过，跑了多轮才发现。
 
 ==与 `/test` 的区别==：`/test` 测功能/接口/UI，关注"代码是否跑通"；`/test-prompt` 测提示词，关注"==LLM 行为是否符合 prompt 预期=="。两者互补，不重叠。
 
 ## 调用方式
 
-- `/test-prompt` — 测试==当前所有== Piece 的全部 directive
+- `/test-prompt` — 测试==当前所有== Prompt 的全部 directive
 - `/test-prompt <Section名>` — 只测指定 Section，如 `/test-prompt Soul` / `/test-prompt AnchorContext`
-- `/test-prompt diff` — 只测最近 git diff 涉及到的 Piece（增量验证）
+- `/test-prompt diff` — 只测最近 git diff 涉及到的 Prompt（增量验证）
 
 ---
 
@@ -16,19 +16,19 @@
 
 | order | 实现类 | 段标题 | 关键 directive 来源 |
 |-------|--------|--------|-------------------|
-| 10  | `SoulPieceImpl` | `## 关于你自己` | `SoulDaoImpl.DEFAULT_SEED`（role/name/tone/principles/forbidden_patterns/quirks） |
-| 20  | `UserImprPieceImpl` | `## 关于对方` | `UserImpressionFields.FIELDS` 10 字段的 `renderDirective()`（非空字段才出现） |
-| 20  | `UserImprPieceImpl` | `## 你对对方的了解程度` | stranger/half-known/fully-known 三模式（fill_ratio 阈值：0.3/0.7；10 字段共 100%) |
-| 28  | `AnchorPieceImpl` | `## 你与对方此前的其他交谈` | `anchor_memory` 其他锚点已有 summary 的条目，按 last_active_at desc，最多 5 条 |
-| 30  | `ToolsPieceImpl` | `## 可用工具` | 5 个 `ToolPrompt` Bean 的 promptInstructions 拼接（见下表） |
-| 35  | `ExpressionPieceImpl` | `## 回复框架` | 静态文案——回复结构与详略框架 |
-| 35  | `ExpressionPieceImpl` | `## 输出格式` | 静态文案——Markdown 输出形态约束（禁止整段裹进代码围栏等） |
-| 35  | `ExpressionPieceImpl` | `## 情绪表达` | 7 词词表 + 倾向规则 + 格式反模式（**无条件注入**，无 enable 开关） |
-| 45  | `RecallPieceImpl` | `## 此刻想起的相关记忆` | 语义召回 Top-N：cold + significant-event + commitment + user-impression 经向量库回查（无命中则整段不渲染） |
+| 10  | `SoulPromptImpl` | `## 关于你自己` | `SoulDaoImpl.DEFAULT_SEED`（role/name/tone/principles/forbidden_patterns/quirks） |
+| 20  | `UserImprPromptImpl` | `## 关于对方` | `UserImpressionFields.FIELDS` 10 字段的 `renderDirective()`（非空字段才出现） |
+| 20  | `UserImprPromptImpl` | `## 你对对方的了解程度` | stranger/half-known/fully-known 三模式（fill_ratio 阈值：0.3/0.7；10 字段共 100%) |
+| 28  | `AnchorPromptImpl` | `## 你与对方此前的其他交谈` | `anchor_memory` 其他锚点已有 summary 的条目，按 last_active_at desc，最多 5 条 |
+| 30  | `ToolsPromptImpl` | `## 可用工具` | 5 个 `ToolPrompt` Bean 的 promptInstructions 拼接（见下表） |
+| 35  | `ExpressionPromptImpl` | `## 回复框架` | 静态文案——回复结构与详略框架 |
+| 35  | `ExpressionPromptImpl` | `## 输出格式` | 静态文案——Markdown 输出形态约束（禁止整段裹进代码围栏等） |
+| 35  | `ExpressionPromptImpl` | `## 情绪表达` | 7 词词表 + 倾向规则 + 格式反模式（**无条件注入**，无 enable 开关） |
+| 45  | `RecallPromptImpl` | `## 此刻想起的相关记忆` | 语义召回 Top-N：cold + significant-event + commitment + user-impression 经向量库回查（无命中则整段不渲染） |
 
-> 注：`significant-event` / `commitment` 已**无专用常驻段**——record 工具写入 hot_memory 时同步索引进向量库，此后仅在语义相关时经 `RecallPieceImpl` 浮现。测它们的「注入后引用」行为，前置状态须让内容进入**向量库**（走 record 工具或 backfill），单纯 SQL 写 hot_memory 不会出现在 prompt 里。
+> 注：`significant-event` / `commitment` 已**无专用常驻段**——record 工具写入 hot_memory 时同步索引进向量库，此后仅在语义相关时经 `RecallPromptImpl` 浮现。测它们的「注入后引用」行为，前置状态须让内容进入**向量库**（走 record 工具或 backfill），单纯 SQL 写 hot_memory 不会出现在 prompt 里。
 
-### 工具子段（ToolsPieceImpl 聚合）
+### 工具子段（ToolsPromptImpl 聚合）
 
 | 工具实现类 | 工具名 | 触发条件 |
 |-----------|--------|---------|
@@ -45,7 +45,7 @@
 1. **必须跑真实 LLM** —— 静态检查（看 prompt 文本是否对、字段是否替换）==不算通过==。LLM 处理 prompt 不可静态推断，软语气、错误条件、跨 Section 冲突==只有真实多轮对话才能暴露==
 2. **必须正反两组用例** —— 每条 directive 配：(a) 条件满足时 LLM 是否==按期望行动==？(b) 条件不满足时 LLM 是否==不出现该行为 / 走对偶分支==？正向偏置是 prompt 工程最常翻车的盲区
 3. **测试前两次审核** —— 步骤 1 拆 directive 完输出给用户审一遍；步骤 2 矩阵设计完再输出审一遍。==避免漏拆==关键 directive（如分支型 Section 的隐藏分支）
-4. **状态切换必须覆盖** —— 不只测"hot 有值/无值"两个静态状态，==还要测状态切换瞬间==（如 stranger → half-known 那一轮、锚点切换后 AnchorPieceImpl 的注入变化）
+4. **状态切换必须覆盖** —— 不只测"hot 有值/无值"两个静态状态，==还要测状态切换瞬间==（如 stranger → half-known 那一轮、锚点切换后 AnchorPromptImpl 的注入变化）
 
 ---
 
@@ -58,9 +58,9 @@
 ### 第一步：枚举 directive（主 Agent 执行）
 
 ```bash
-# 找所有 Piece 实现
+# 找所有 Prompt 实现
 ```
-用 Grep `implements Piece` 找全实现类。对每个实现 Read 其 `render()` 方法，==逐条==拆出 directive。`ToolsPieceImpl` 还需要 Read 各 `ToolPrompt.promptInstructions()`，以及 `UserImpressionFields.FIELDS` 的 `renderDirective()`。
+用 Grep `implements Prompt` 找全实现类。对每个实现 Read 其 `render()` 方法，==逐条==拆出 directive。`ToolsPromptImpl` 还需要 Read 各 `ToolPrompt.promptInstructions()`，以及 `UserImpressionFields.FIELDS` 的 `renderDirective()`。
 
 输出格式如下表，==输出后暂停==，让用户审核是否有漏拆（特别注意 `if/else` 分支、`switch` 各 case、动态拼接的子段）：
 
@@ -94,9 +94,9 @@
 ```
 
 ==关键审核点==：
-- `UserImprPieceImpl` 10 个字段的 `renderDirective()` 是否逐条拆（`username` / `language` / `role` / `interests` / `tone` / `personality` / `habits` / `hobbies` / `values` / `communication_style`）
-- `UserImprPieceImpl` 了解程度三模式（stranger/half-known/fully-known）是否都拆了
-- `AnchorPieceImpl` 的 "有 summary" 和 "无 summary" 两路是否都拆了
+- `UserImprPromptImpl` 10 个字段的 `renderDirective()` 是否逐条拆（`username` / `language` / `role` / `interests` / `tone` / `personality` / `habits` / `hobbies` / `values` / `communication_style`）
+- `UserImprPromptImpl` 了解程度三模式（stranger/half-known/fully-known）是否都拆了
+- `AnchorPromptImpl` 的 "有 summary" 和 "无 summary" 两路是否都拆了
 - `Soul` 段的 `principles`（4条）、`forbidden_patterns`（3条）、`quirks`（2条）是否==逐条==拆开
 - `Mood` 段的 7 词倾向规则（难过优先共情、兴奋优先共鸣、好奇优先、**拿不准优先愉快**）是否全拆
 
@@ -175,7 +175,7 @@ VALUES ('zfx', 'significant-event', hex(randomblob(16)), '正在备考研究生'
 INSERT INTO hot_memory (user_id, type, key, value, updated_at)
 VALUES ('zfx', 'commitment', hex(randomblob(16)), '我（AI）答应ZFX：本周帮其梳理 React 学习路径', strftime('%s','now')*1000);
 
--- 给另一个锚点写入 summary（触发 AnchorPieceImpl 注入）
+-- 给另一个锚点写入 summary（触发 AnchorPromptImpl 注入）
 UPDATE anchor_memory SET summary='聊了学 React hooks 的进展，给出了 useEffect 示例代码，还没有给完整路径建议' 
 WHERE id='<另一个锚点的 UUID>' AND user_id='zfx';
 
@@ -299,7 +299,7 @@ LC4J DEBUG 日志会打印每次请求的完整 SystemMessage / UserMessage / Ai
 
 - 后端 8080 + 前端 3000 都必须在跑
 - 若未跑，主 Agent 启动前先 ==询问用户==（不擅自重启正在跑的服务）
-- ==关键==：后端必须是当前代码——若刚改过 Piece / yml / SoulDao，先确认重启过（项目无 devtools）
+- ==关键==：后端必须是当前代码——若刚改过 Prompt / yml / SoulDao，先确认重启过（项目无 devtools）
 - mood 段无条件注入（无 enable 开关），直接测即可
 - AnchorContext 测试需要至少有 2 个锚点，且至少一个锚点已有压缩过的 summary
 

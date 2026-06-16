@@ -1,6 +1,7 @@
 package com.zoufx.ai.agent.prompt.impl;
 
-import com.zoufx.ai.agent.prompt.api.Piece;
+import com.zoufx.ai.agent.prompt.api.Prompt;
+import com.zoufx.ai.agent.prompt.support.PromptContext;
 import com.zoufx.ai.agent.tool.api.ToolPrompt;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
@@ -15,7 +16,7 @@ import java.util.stream.Collectors;
  */
 @Component
 @RequiredArgsConstructor
-public class ToolsPieceImpl implements Piece {
+public class ToolsPromptImpl implements Prompt {
 
     private final List<ToolPrompt> tools;
 
@@ -26,7 +27,7 @@ public class ToolsPieceImpl implements Piece {
 
     @Override
     @Nullable
-    public String render(@Nullable String userId, @Nullable String anchorId) {
+    public String render(@Nullable PromptContext ctx) {
         if (tools.isEmpty()) return null;
         String body = tools.stream()
                 .map(t -> "### " + t.section() + "\n" + t.promptInstructions())

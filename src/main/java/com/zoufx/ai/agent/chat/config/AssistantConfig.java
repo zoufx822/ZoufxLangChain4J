@@ -23,7 +23,7 @@ import org.springframework.context.annotation.Configuration;
  * 因此每档一个 assistant，由 ChatService 按请求的 thinking 开关路由。两个 assistant 共享同一
  * ChatMemoryProvider（同 anchorId 同记忆），切档不丢上下文。
  *
- * <p>System prompt 由 {@link PromptComposer} 按 Piece 序列动态组装。
+ * <p>System prompt 由 {@link PromptComposer} 按 Prompt 序列动态组装。
  */
 @Configuration
 @RequiredArgsConstructor

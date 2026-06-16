@@ -10,21 +10,21 @@ import java.util.List;
  * 锚点记忆业务接口——管理 anchor_memory 表，承载 anchorId ↔ userId 关联 + title / summary 缓存。
  *
  * <p>同步方法是本体（阻塞 JDBC），只允许已脱离 event loop 的调用方使用
- * （Piece.render、@Tool 方法、boundedElastic 上的阻塞流水线）；
+ * （Prompt.render、@Tool 方法、boundedElastic 上的阻塞流水线）；
  * {@code xxxAsync} 是同步本体的 boundedElastic 包装，供 WebFlux Controller /
  * ChatService 反应式编排串接，仅在确有反应式调用方时提供。
  */
 public interface AnchorMemoryDao {
 
     /**
-     * 同步反查 userId——给 Piece 与 @Tool 方法使用。
+     * 同步反查 userId——给 Prompt 与 @Tool 方法使用。
      * anchorId 不存在返回 null，调用方自行处理（一般跳过本段 / 返回工具调用失败）。
      */
     @Nullable String findUserId(String anchorId);
 
     /**
      * 同步加载该用户的其他锚点（排除当前 anchorId），按 last_active_at desc。
-     * 供 {@code AnchorPieceImpl.render} 用。
+     * 供 {@code AnchorPromptImpl.render} 用。
      */
     List<AnchorMemory> listOtherAnchors(String userId, String excludeAnchorId);
 
