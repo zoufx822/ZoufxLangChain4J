@@ -46,8 +46,3 @@ application-local.properties
 /data/
 .codegraph/
 .reasonix/
-
-# Environment variables（含 API keys）
-.env
-.env.local
-.env.*.local
