@@ -2,6 +2,7 @@ package com.zoufx.ai.agent.llm.config;
 
 import com.zoufx.ai.agent.chat.api.ChatAssistant;
 import com.zoufx.ai.agent.chat.api.StreamingChatPort;
+import com.zoufx.ai.agent.chat.model.Thinking;
 import com.zoufx.ai.agent.chat.support.AssistantFactory;
 import com.zoufx.ai.agent.llm.model.Features;
 import com.zoufx.ai.agent.llm.property.DeepSeekV4Props;
@@ -13,11 +14,13 @@ import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.Nullable;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -43,6 +46,16 @@ public class DeepSeekV4Config {
 
     private final DeepSeekV4Props props;
 
+    /** normal 档的约定值：端口识别它=不下发 reasoning_effort（不是把字符串发给 LLM）。 */
+    private static final String EFFORT_NORMAL = "normal";
+    /** 前端默认选档（thinking 开启但未指定时也回落到它）。 */
+    private static final String EFFORT_DEFAULT = EFFORT_NORMAL;
+    /** 固定三档（value=API 值，label=前端文案）。normal=不带 effort；high/max 才透传给 LLM。 */
+    private static final List<Features.EffortOption> EFFORT_OPTIONS = List.of(
+            new Features.EffortOption("normal", "标准"),
+            new Features.EffortOption("high", "深度"),
+            new Features.EffortOption("max", "极致"));
+
     /** DeepSeek 私有 thinking 字段，序列化为请求体根级 {@code "thinking": {"type": ...}}。 */
     private static Map<String, Object> thinkingParam(String type) {
         return Map.of("thinking", Map.of("type", type));
@@ -67,24 +80,36 @@ public class DeepSeekV4Config {
                 .build();
     }
 
-    /** 流式对话端口：单模型 + per-call 参数切换思考档（pro+max+enabled）/ 快档（flash+disabled）。 */
+    /** 流式对话端口：单模型 + per-call 参数切换思考档（pro + effort + enabled）/ 快档（flash + disabled）。 */
     @Bean
     public StreamingChatPort streamingChatPort(AssistantFactory factory, StreamingChatModel streamingChatModel) {
         ChatAssistant assistant = factory.create(streamingChatModel);
         return (anchorId, userMessage, thinking) -> assistant.chat(anchorId, userMessage, perCallParams(thinking));
     }
 
-    private ChatRequestParameters perCallParams(boolean thinking) {
-        return thinking
-                ? OpenAiChatRequestParameters.builder()
-                        .modelName(props.getChat().getThinkingModel())
-                        .reasoningEffort("max")
-                        .customParameters(thinkingParam("enabled"))
-                        .build()
-                : OpenAiChatRequestParameters.builder()
-                        .modelName(props.getChat().getFastModel())
-                        .customParameters(thinkingParam("disabled"))
-                        .build();
+    private ChatRequestParameters perCallParams(Thinking thinking) {
+        if (!thinking.enabled()) {
+            return OpenAiChatRequestParameters.builder()
+                    .modelName(props.getChat().getFastModel())
+                    .customParameters(thinkingParam("disabled"))
+                    .build();
+        }
+        var builder = OpenAiChatRequestParameters.builder()
+                .modelName(props.getChat().getThinkingModel())
+                .customParameters(thinkingParam("enabled"));
+        String eff = resolveEffort(thinking.effort());
+        // normal 档 = 不带 reasoning_effort 字段（DeepSeek 默认行为，最省）；high/max 才显式下发
+        if (!EFFORT_NORMAL.equals(eff)) builder.reasoningEffort(eff);
+        return builder.build();
+    }
+
+    /** 校验 effort 是否在支持档位内；非法/为空回落默认档。 */
+    private String resolveEffort(@Nullable String effort) {
+        if (effort != null && EFFORT_OPTIONS.stream().anyMatch(o -> o.value().equals(effort))) {
+            return effort;
+        }
+        if (effort != null) log.warn("Unknown effort='{}', fallback to default='{}'", effort, EFFORT_DEFAULT);
+        return EFFORT_DEFAULT;
     }
 
     /** 同步模型：情绪快速分类 + 锚点摘要压缩，不参与流式聊天主路（恒用快档 + thinking 关闭）。 */
@@ -108,6 +133,7 @@ public class DeepSeekV4Config {
 
     @Bean
     public Features features() {
-        return new Features("deepseek-v4");
+        return new Features("deepseek-v4",
+                new Features.ThinkEffort(true, EFFORT_DEFAULT, EFFORT_OPTIONS));
     }
 }

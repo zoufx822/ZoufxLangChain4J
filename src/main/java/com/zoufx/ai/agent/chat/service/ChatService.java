@@ -12,6 +12,7 @@ import com.zoufx.ai.agent.memory.support.ChatRequestRegistry;
 import com.zoufx.ai.agent.memory.support.HotMemoryType;
 import com.zoufx.ai.agent.chat.model.ChatEvent;
 import com.zoufx.ai.agent.chat.model.ChatPrepared;
+import com.zoufx.ai.agent.chat.model.Thinking;
 import com.zoufx.ai.agent.prompt.impl.RecallPromptImpl;
 import com.zoufx.ai.agent.prompt.support.PromptContext;
 import com.zoufx.ai.agent.prompt.support.PromptContextHolder;
@@ -26,6 +27,7 @@ import com.zoufx.ai.agent.vector.support.VectorPayload;
 import com.zoufx.ai.agent.tool.support.ToolNameMap;
 import com.zoufx.ai.agent.mood.service.MoodService;
 import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -99,7 +101,7 @@ public class ChatService {
      * <p>新对话（{@code anchorId == null}）时自动创建锚点，{@code anchor_created} 作为首条事件发出，
      * 前端收到后更新 URL 中的 anchorId。
      */
-    public Flux<ChatEvent> chat(@Nullable String anchorId, String prompt, boolean thinking, String userId) {
+    public Flux<ChatEvent> chat(@Nullable String anchorId, String prompt, Thinking thinking, String userId) {
         return Blocking.call(() -> prepare(userId, anchorId, prompt))
                 .flatMapMany(p -> buildStream(thinking, p, userId, prompt))
                 .onErrorResume(err -> {
@@ -157,13 +159,15 @@ public class ChatService {
      *
      * <p>instant 支失败静默不发射（情绪是辅助能力）；main 支重试仅限首次 emit 前。
      */
-    private Flux<ChatEvent> buildStream(boolean thinking, ChatPrepared prepared, String userId, String prompt) {
+    private Flux<ChatEvent> buildStream(Thinking thinking, ChatPrepared prepared, String userId, String prompt) {
         String anchorId = prepared.anchorId();
         // instant / main 两支并发写同一批状态变量，必须用线程安全类型
         AtomicBoolean hasEmitted = new AtomicBoolean(false);   // 重试守门：收到首条 token 后禁止再重试
         StringBuilder assistantBuffer = new StringBuilder();   // 只有 main 支写，无并发
         AtomicReference<String> instantMood = new AtomicReference<>(); // instant 支写
         List<String> inlineMoods = new CopyOnWriteArrayList<>();       // main 支写
+        // LC4J 流句柄：首个 token 回调时抓取，客户端断开（停止/关页）时掐断上游 LLM 流，停止烧 token
+        AtomicReference<StreamingHandle> streamHandle = new AtomicReference<>();
 
         Flux<ChatEvent> instant = chatMemoryDao.loadByAnchorIdAsync(anchorId)
                 .flatMap(history -> moodService.classifyAsync(prompt, history))
@@ -178,7 +182,7 @@ public class ChatService {
         // subscribeOn 必须在 retryWhen 之前：retryWhen 默认在 parallel 调度器重新订阅，
         // 显式 subscribeOn(boundedElastic) 才能让重试也跑在 boundedElastic 上
         Flux<ChatEvent> main = Flux.<ChatEvent>create(sink ->
-                        startTokenStream(sink, thinking, anchorId, userId, prompt, hasEmitted, inlineMoods))
+                        startTokenStream(sink, thinking, anchorId, userId, prompt, hasEmitted, inlineMoods, streamHandle))
                 .subscribeOn(Schedulers.boundedElastic())
                 .retryWhen(buildRetrySpec(hasEmitted));
 
@@ -196,6 +200,9 @@ public class ChatService {
                 .doOnComplete(() -> onStreamComplete(anchorId, userId, prompt, assistantBuffer, instantMood.get(), inlineMoods))
                 .doOnCancel(() -> {
                     log.info("Stream cancelled [anchorId={}, userId={}]", anchorId, userId);
+                    // 客户端断开：主动掐断上游 LLM 流，避免无人消费时继续烧 token
+                    StreamingHandle h = streamHandle.get();
+                    if (h != null && !h.isCancelled()) h.cancel();
                     chatMemoryDao.cleanupOrphansAsync(anchorId)
                             .onErrorResume(err -> {
                                 log.warn("Post-cancel sanitize failed [anchorId={}]: {}", anchorId, err.toString());
@@ -219,21 +226,25 @@ public class ChatService {
      *
      * <p>LC4J 回调跑在框架线程，与 event loop 隔离；{@code hasEmitted} 首次回调时置位，供重试策略判断。
      */
-    private void startTokenStream(FluxSink<ChatEvent> sink, boolean thinking,
+    private void startTokenStream(FluxSink<ChatEvent> sink, Thinking thinking,
                                   String anchorId, String userId, String prompt,
-                                  AtomicBoolean hasEmitted, List<String> inlineMoods) {
+                                  AtomicBoolean hasEmitted, List<String> inlineMoods,
+                                  AtomicReference<StreamingHandle> streamHandle) {
         final MoodEventProcessor moodStripper = new MoodEventProcessor(sink, userId);
 
         streamingChatPort.stream(anchorId, prompt, thinking)
-                .onPartialThinking(pt -> {
+                // WithContext 变体：首个 thinking/content 回调时抓住 StreamingHandle，供取消时掐断上游
+                .onPartialThinkingWithContext((pt, ctx) -> {
+                    streamHandle.compareAndSet(null, ctx.streamingHandle());
                     hasEmitted.set(true);
                     if (pt != null && pt.text() != null) {
                         sink.next(new ChatEvent("thinking", pt.text()));
                     }
                 })
-                .onPartialResponse(ct -> {
+                .onPartialResponseWithContext((pr, ctx) -> {
+                    streamHandle.compareAndSet(null, ctx.streamingHandle());
                     hasEmitted.set(true);
-                    moodStripper.accept(ct);
+                    moodStripper.accept(pr.text());
                 })
                 .beforeToolExecution(evt -> {
                     hasEmitted.set(true);

@@ -39,13 +39,14 @@ public class MiniMaxM3Config {
 
     private final MiniMaxM3Props props;
 
-    /** 流式对话端口：thinking 档（adaptive）/ 快档（disabled）各一个模型，按请求选其一。 */
+    /** 流式对话端口：thinking 档（adaptive）/ 快档（disabled）各一个模型，只按 enabled 选其一。
+     *  effort 对 Anthropic 协议无 per-request 载体，忽略（能力声明里已对前端标 unsupported）。 */
     @Bean
     public StreamingChatPort streamingChatPort(AssistantFactory factory) {
         ChatAssistant thinkingAssistant = factory.create(streamingModel("adaptive"));
         ChatAssistant fastAssistant = factory.create(streamingModel("disabled"));
         return (anchorId, userMessage, thinking) ->
-                (thinking ? thinkingAssistant : fastAssistant)
+                (thinking.enabled() ? thinkingAssistant : fastAssistant)
                         .chat(anchorId, userMessage, ChatRequestParameters.builder().build());
     }
 
@@ -91,6 +92,6 @@ public class MiniMaxM3Config {
 
     @Bean
     public Features features() {
-        return new Features("MiniMax-M3");
+        return new Features("MiniMax-M3", Features.ThinkEffort.unsupported());
     }
 }

@@ -4,13 +4,13 @@
 
 Spring Boot 4.0.6 + LangChain4J 1.13.1，支持 `deepseek-v4` / `MiniMax-M3` 双 LLM profile 切换：DeepSeek 走 OpenAI 兼容协议，MiniMax 走 Anthropic 兼容协议。带会话记忆的流式聊天与思考模式。
 
-Hot Memory 含三种 type（v0.14）：`user-impression`（用户画像，UPSERT）/ `significant-event`（重要经历，append-only）/ `commitment`（双方承诺，append-only）。情绪谱 7 词：平静 / 愉快 / 兴奋 / 难过 / 愤怒 / 好奇 / 困惑。
+Hot Memory 含三种 type：`user-impression`（用户画像，UPSERT）/ `significant-event`（重要经历，append-only）/ `commitment`（双方承诺，append-only）。情绪谱 7 词：平静 / 愉快 / 兴奋 / 难过 / 愤怒 / 好奇 / 困惑。
 
-记忆检索走语义召回（v0.2，FTS5 已下线）：SQLite 为正本，Qdrant 只存向量 + 指针元数据（本地 `docker-compose up` 起 Qdrant，gRPC 6334；嵌入用 BGE-M3 走 OpenAI 兼容端点，与 LLM profile 解耦）。每轮对话 prepare 阶段按 userId 自动召回（三维加权 recency/importance/relevance + MMR），注入 system prompt「此刻想起的相关记忆」段，前端无感知；LLM 需要深挖时另有 `search_cold_memory` 工具。配置见 `ai.embedding` / `ai.vector` / `ai.recall`；存量数据回填开 `ai.recall.backfill-on-start`。
+记忆检索走语义召回：SQLite 为正本，Qdrant 只存向量 + 指针元数据（本地 `docker-compose up` 起 Qdrant，gRPC 6334；嵌入用 BGE-M3 走 OpenAI 兼容端点，与 LLM profile 解耦）。每轮对话 prepare 阶段按 userId 自动召回（三维加权 recency/importance/relevance + MMR），注入 system prompt「此刻想起的相关记忆」段，前端无感知；LLM 需要深挖时另有 `search_cold_memory` 工具。配置见 `ai.embedding` / `ai.vector` / `ai.recall`；存量数据回填开 `ai.recall.backfill-on-start`。
 
 ## 架构
 
-**后端：** Spring WebFlux + Reactor Netty（已移除 `spring-boot-starter-web`，对齐 LangChain4J 官方姿势）。HTTP 入口集中在 `ChatController`：
+**后端：** Spring WebFlux + Reactor Netty。HTTP 入口集中在 `ChatController`：
 - `POST /ai/chat`（SSE）—— 流式聊天，事件类型 `anchor_created` / `thinking` / `content` / `tool_call` / `tool_result` / `mood` / `error`；请求携带 `thinking` 布尔开关，true 走思考档、false 走快档；`anchorId` 为空时懒创建锚点（`anchor_created` 作首条事件）
 - `GET /ai/features` —— 当前 profile 标识（预留扩展点，前端暂不消费）
 - `GET /ai/anchors?userId=X` / `GET /ai/anchors/{id}/messages` / `GET /ai/anchors/{id}/context` / `PATCH /ai/anchors/{id}/title` —— 锚点列表 / 窗口消息 / 三层衰减视图 / 重命名

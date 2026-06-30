@@ -64,14 +64,14 @@ git diff HEAD --stat               # 变更概况
 
 ### 第三步：子 Agent 执行测试
 
-**模型选择**：使用 Claude 官方订阅（Pro / Max plan）时，子 Agent **必须用 `haiku` 模型**（`Task` tool 的 `model` 参数传 `"haiku"`）。原因：
+**模型选择**：子 Agent **必须用 `sonnet` 模型**（`Task` tool 的 `model` 参数传 `"sonnet"`）。原因：
 
-- 测试是执行型任务（按矩阵跑用例 + 记录结果），不需要复杂推理
-- haiku 速度快、消耗低，避免占用主会话的 Opus/Sonnet 配额
-- 子 Agent 独立上下文，不带主会话累积包袱，haiku 完全胜任
-- 失败用例重测（第四步）同样用 haiku
+- 测试虽是执行型任务，但**观测与判定容易出错**——曾用 haiku 跑，结果漏看 SSE 事件（工具明明触发却报"无 tool_call"）、误判通过/失败，整份报告不可信，主 Agent 不得不逐条回日志复核
+- 判定"行为是否符合预期"需要一定推理（区分 tool_call 有无、mood 选词对错、边界语义），haiku 在这类观测+判定上不可靠
+- sonnet 在准确性和成本间平衡，子 Agent 独立上下文不占主会话包袱
+- 失败用例重测（第四步）同样用 sonnet
 
-仅当遇到子 Agent 无法处理的复杂判断（如视觉异常的根因分析）才升级到 sonnet。Opus 不应在此场景使用。
+不要用 haiku（实测判定不可靠）。Opus 不应在此场景使用（成本过高，sonnet 已够）。
 
 以 Task 方式启动子 Agent，传入以下 prompt 模板：
 

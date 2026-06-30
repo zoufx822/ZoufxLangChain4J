@@ -1,9 +1,4 @@
 {
-  "enabledPlugins": {
-    "superpowers@claude-plugins-official": true,
-    "playwright@claude-plugins-official": true,
-    "skill-creator@claude-plugins-official": true
-  },
   "hooks": {
     "SubagentStop": [
       {

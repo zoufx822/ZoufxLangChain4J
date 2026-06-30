@@ -204,9 +204,9 @@ POST /ai/chat
 
 ---
 
-### 第三步：子 Agent 跑测试（Task tool，haiku 模型）
+### 第三步：子 Agent 跑测试（Task tool，sonnet 模型）
 
-==与 `/test` 同款约定==：haiku 模型，Playwright MCP 操作浏览器，截图只传纯文件名落 `.playwright-mcp/`。
+==与 `/test` 同款约定==：**sonnet 模型**（不要用 haiku——实测它会漏看 SSE 工具事件、误判工具是否触发，prompt-behavior 的软语气/边界判定更需要 sonnet 的准确性），Playwright MCP 操作浏览器，截图只传纯文件名落 `.playwright-mcp/`。
 
 传入子 Agent 的 prompt 模板：
 
