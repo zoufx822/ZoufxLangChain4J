@@ -77,6 +77,8 @@ public class ChatService {
     private final ChatMemoryDao chatMemoryDao;
     /** 锚点（对话会话）的 CRUD——创建、touch、title backfill。 */
     private final AnchorMemoryDao anchorMemoryDao;
+    /** 锚点生命周期业务——开一轮（压上一锚点 + 解析/懒建本次锚点）。 */
+    private final AnchorService anchorService;
     /** 长期对话原文归档，按 userId 顺序追加；向量索引的数据源。 */
     private final ColdMemoryDao coldMemoryDao;
     /** AI 人格快照——每次 prepare() 预加载进 PromptContext。 */
@@ -101,8 +103,9 @@ public class ChatService {
      * <p>新对话（{@code anchorId == null}）时自动创建锚点，{@code anchor_created} 作为首条事件发出，
      * 前端收到后更新 URL 中的 anchorId。
      */
-    public Flux<ChatEvent> chat(@Nullable String anchorId, String prompt, Thinking thinking, String userId) {
-        return Blocking.call(() -> prepare(userId, anchorId, prompt))
+    public Flux<ChatEvent> chat(@Nullable String anchorId, @Nullable String prevAnchorId,
+                                String prompt, Thinking thinking, String userId) {
+        return Blocking.call(() -> prepare(userId, anchorId, prevAnchorId, prompt))
                 .flatMapMany(p -> buildStream(thinking, p, userId, prompt))
                 .onErrorResume(err -> {
                     log.error("Chat prepare failed [userId={}]", userId, err);
@@ -113,14 +116,16 @@ public class ChatService {
     /**
      * 在 {@code assistant.chat()} 启动前同步完成，返回解析后的锚点信息。
      *
-     * <p>锚点创建在 try 外——失败是硬错误，直接传播；embed / 召回 / 索引 / PromptContext
-     * 构建失败吞掉（辅助能力，不阻断对话）。
+     * <p>锚点开一轮（{@code anchorService.openTurn}：压上一锚点 + 解析/懒建）在 try 外——
+     * 建锚失败是硬错误，直接传播；embed / 召回 / 索引 / PromptContext 构建失败吞掉
+     * （辅助能力，不阻断对话）。
      */
-    private ChatPrepared prepare(String userId, @Nullable String anchorId, String prompt) {
+    private ChatPrepared prepare(String userId, @Nullable String anchorId,
+                                 @Nullable String prevAnchorId, String prompt) {
         boolean newAnchor = anchorId == null;
-        if (newAnchor) {
-            anchorId = anchorMemoryDao.create(userId);
-        }
+        // 锚点生命周期集中在 AnchorService：压上一锚点（旁路）+ 解析/懒建本次锚点。
+        // 建锚是硬错误——在 try 外，失败直接抛给 chat() 的 onErrorResume。
+        anchorId = anchorService.openTurn(anchorId, prevAnchorId, userId);
         // 注册本次请求，防止 LLM 重试时 LC4J 重复写入 UserMessage
         chatRequestRegistry.begin(anchorId, UUID.randomUUID().toString());
         try {

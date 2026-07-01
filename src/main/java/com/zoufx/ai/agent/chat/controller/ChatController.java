@@ -64,13 +64,9 @@ public class ChatController {
         log.info("Received prompt [anchorId={}, prevAnchorId={}, thinking={}]: {}",
                 request.anchorId(), request.prevAnchorId(), request.thinking(), prompt);
 
-        // 锚点切换：fire-and-forget 触发对前一锚点的 LLM 摘要压缩
-        if (request.prevAnchorId() != null && !request.prevAnchorId().isBlank()) {
-            log.info("Anchor switch detected, compressing prevAnchorId={}", request.prevAnchorId());
-            anchorService.compressAsync(request.prevAnchorId()).subscribe();
-        }
-
-        return chatService.chat(request.anchorId(), prompt, request.thinking(), request.userId())
+        // 锚点切换压缩 + 懒建本次锚点，都下沉到 ChatService→AnchorService.openTurn 统一处理
+        return chatService.chat(request.anchorId(), request.prevAnchorId(),
+                        prompt, request.thinking(), request.userId())
                 .map(e -> ServerSentEvent.<String>builder().event(e.type()).data(e.data()).build());
     }
 

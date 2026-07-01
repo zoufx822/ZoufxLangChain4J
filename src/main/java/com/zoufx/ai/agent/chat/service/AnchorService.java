@@ -10,6 +10,7 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
@@ -17,12 +18,14 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 
 /**
- * 锚点服务——客户端切走某锚点时调 {@link #compressAsync}，
- * 用同步 ChatModel 一次性把消息流压成短摘要写回 anchor.summary 缓存；
- * 另承载锚点上下文视图（其他锚点三层衰减）的组装。
+ * 锚点服务——承载对话锚点的生命周期业务：
+ * <ul>
+ *   <li>{@link #openTurn}：开启新一轮（压上一锚点 + 解析/懒建本次锚点），供 ChatService 调用；</li>
+ *   <li>{@link #compressAsync}：用同步 ChatModel 把消息流压成短摘要写回 anchor.summary 缓存；</li>
+ *   <li>{@link #anchorContextAsync}：其他锚点三层衰减视图（near/mid/far）的组装。</li>
+ * </ul>
  *
- * <p>压缩调用方（ChatController）以 fire-and-forget 形式 subscribe()，
- * 失败仅记日志，不阻断主聊天流。
+ * <p>压缩以 fire-and-forget 形式 subscribe()，失败仅记日志，不阻断主聊天流。
  */
 @Slf4j
 @Service
@@ -49,6 +52,19 @@ public class AnchorService {
     private final ChatModel chatModel;
     private final ChatMemoryDao chatMemoryDao;
     private final AnchorMemoryDao anchorMemoryDao;
+
+    /**
+     * 开启新一轮对话的锚点处理，返回本次要用的 anchorId：
+     * 压缩上一锚点（旁路 fire-and-forget，不阻塞主流程）+ 解析/懒建本次锚点。
+     * 供 ChatService 在准备阶段调用；须在非 event loop 线程上跑（内含阻塞建锚）。
+     */
+    public String openTurn(@Nullable String anchorId, @Nullable String prevAnchorId, String userId) {
+        if (prevAnchorId != null && !prevAnchorId.isBlank()) {
+            log.info("Anchor switch detected, compressing prevAnchorId={}", prevAnchorId);
+            compressAsync(prevAnchorId).subscribe();
+        }
+        return resolveOrCreate(anchorId, userId);
+    }
 
     public Mono<Void> compressAsync(String anchorId) {
         return Blocking.run(() -> compress(anchorId))
@@ -90,6 +106,11 @@ public class AnchorService {
         String userId = anchorMemoryDao.findUserId(anchorId);
         if (userId == null) return AnchorContextView.empty();
         return AnchorContextView.from(anchorMemoryDao.listOtherAnchors(userId, anchorId));
+    }
+
+    /** 解析本次锚点：为空则懒建新锚返回新 id，非空原样返回。建锚失败为硬错误，直接抛出。 */
+    private String resolveOrCreate(@Nullable String anchorId, String userId) {
+        return anchorId != null ? anchorId : anchorMemoryDao.create(userId);
     }
 
     private String callLLM(String transcript) {

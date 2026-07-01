@@ -11,7 +11,7 @@ Hot Memory 含三种 type：`user-impression`（用户画像，UPSERT）/ `signi
 ## 架构
 
 **后端：** Spring WebFlux + Reactor Netty。HTTP 入口集中在 `ChatController`：
-- `POST /ai/chat`（SSE）—— 流式聊天，事件类型 `anchor_created` / `thinking` / `content` / `tool_call` / `tool_result` / `mood` / `error`；请求携带 `thinking` 布尔开关，true 走思考档、false 走快档；`anchorId` 为空时懒创建锚点（`anchor_created` 作首条事件）
+- `POST /ai/chat`（SSE）—— 流式聊天，事件类型 `anchor_created` / `thinking` / `content` / `tool_call` / `tool_result` / `mood` / `error`；请求携带 `thinking` 布尔开关，true 走思考档、false 走快档；`anchorId` 为空时懒创建锚点（`anchor_created` 作首条事件）。请求可带 `regenerate`（布尔，可选）：`true` = 重试同一轮——**须回滚该 anchor 最后一轮 assistant 输出（ChatMemory 末尾 assistant 消息及其 reasoning/tool 轮）后就地再生成，不得把 prompt 当新 user 轮追加**，否则记忆窗口会出现重复提问。前端只对「最后一条」出错消息开放重试，故"回滚最后一轮"无歧义；缺省/`false` 即普通新轮。**待实现**
 - `GET /ai/features` —— 当前 profile 标识（预留扩展点，前端暂不消费）
 - `GET /ai/anchors?userId=X` / `GET /ai/anchors/{id}/messages` / `GET /ai/anchors/{id}/context` / `PATCH /ai/anchors/{id}/title` —— 锚点列表 / 窗口消息 / 三层衰减视图 / 重命名
 - `GET /ai/memory/hot?userId=X&type=Y` —— Hot Memory snapshot
