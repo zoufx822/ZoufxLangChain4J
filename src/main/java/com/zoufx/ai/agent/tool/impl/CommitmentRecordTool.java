@@ -1,10 +1,8 @@
 package com.zoufx.ai.agent.tool.impl;
 
 import com.zoufx.ai.agent.memory.api.AnchorMemoryDao;
-import com.zoufx.ai.agent.memory.api.HotMemoryDao;
+import com.zoufx.ai.agent.memory.service.HotMemoryService;
 import com.zoufx.ai.agent.memory.support.HotMemoryType;
-import com.zoufx.ai.agent.vector.api.IndexerService;
-import com.zoufx.ai.agent.vector.support.VectorPayload;
 import com.zoufx.ai.agent.tool.api.ToolPrompt;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -28,9 +26,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class CommitmentRecordTool implements ToolPrompt {
 
-    private final HotMemoryDao hotMemoryDao;
+    private final HotMemoryService hotMemoryService;
     private final AnchorMemoryDao anchorMemoryDao;
-    private final IndexerService indexer;
 
     @Override
     public String section() {
@@ -93,10 +90,8 @@ public class CommitmentRecordTool implements ToolPrompt {
         String trimmed = description.trim();
         String key = UUID.randomUUID().toString();
         log.info("📝 record_commitment [userId={}] uuid={} description={}", userId, key, trimmed);
-        hotMemoryDao.set(userId, HotMemoryType.COMMITMENT, key, trimmed);
-        // 向量索引 fire-and-forget：embed+Qdrant 写都在异步链路（不阻塞工具返回）
-        indexer.indexTextAsync(userId, VectorPayload.COMMITMENT, key, trimmed, null,
-                System.currentTimeMillis()).subscribe();
+        // 暂存不落库、不建索引——本轮 LLM 成功跑完才 commit（ChatService.persistTurn），失败/停止随 pending 丢弃
+        hotMemoryService.stage(memoryId, userId, HotMemoryType.COMMITMENT, key, trimmed, trimmed);
         return "已记下承诺：" + trimmed;
     }
 }

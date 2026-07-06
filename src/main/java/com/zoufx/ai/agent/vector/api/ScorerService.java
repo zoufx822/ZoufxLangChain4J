@@ -5,7 +5,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * 记忆重要性评分——写入向量时算一次，随 payload 落库，参与召回三维加权。
  *
- * <p>接口式：v0.2 起步用规则评分（{@code ScorerServiceImpl}），v0.3 可切 LLM 评分版而不动调用方。
+ * <p>接口式：当前用规则评分（{@code ScorerServiceImpl}），便于日后切 LLM 评分版而不动调用方。
  */
 public interface ScorerService {
 

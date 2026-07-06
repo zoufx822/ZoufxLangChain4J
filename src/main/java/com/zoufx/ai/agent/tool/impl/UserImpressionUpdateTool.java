@@ -1,11 +1,9 @@
 package com.zoufx.ai.agent.tool.impl;
 
 import com.zoufx.ai.agent.memory.api.AnchorMemoryDao;
-import com.zoufx.ai.agent.memory.api.HotMemoryDao;
+import com.zoufx.ai.agent.memory.service.HotMemoryService;
 import com.zoufx.ai.agent.memory.support.HotMemoryType;
 import com.zoufx.ai.agent.memory.support.UserImpressionFields;
-import com.zoufx.ai.agent.vector.api.IndexerService;
-import com.zoufx.ai.agent.vector.support.VectorPayload;
 import com.zoufx.ai.agent.tool.api.ToolPrompt;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -28,9 +26,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class UserImpressionUpdateTool implements ToolPrompt {
 
-    private final HotMemoryDao hotMemoryDao;
+    private final HotMemoryService hotMemoryService;
     private final AnchorMemoryDao anchorMemoryDao;
-    private final IndexerService indexer;
 
     @Override
     public String section() {
@@ -94,12 +91,10 @@ public class UserImpressionUpdateTool implements ToolPrompt {
             return "update_user_impression 调用失败：key '" + trimmedKey + "' 不在允许字段列表内";
         }
         log.info("📝 update_user_impression [userId={}] {}={}", userId, trimmedKey, trimmedValue);
-        hotMemoryDao.set(userId, HotMemoryType.USER_IMPRESSION, trimmedKey, trimmedValue);
-        // 画像向量索引 fire-and-forget：embed 带字段语义的短句（如「你做什么的：Java 后端」），
-        // UPSERT 由确定性 id 保证；embed+Qdrant 写都在异步链路（不阻塞工具返回）
+        // 暂存不落库、不建索引——本轮 LLM 成功跑完才 commit（ChatService.persistTurn），失败/停止随 pending 丢弃
+        // embedText 带字段语义的短句（如「你做什么的：Java 后端」），UPSERT 由确定性 id 保证
         String embedText = UserImpressionFields.embedText(trimmedKey, trimmedValue);
-        indexer.indexTextAsync(userId, VectorPayload.USER_IMPRESSION, trimmedKey, embedText, null,
-                System.currentTimeMillis()).subscribe();
+        hotMemoryService.stage(memoryId, userId, HotMemoryType.USER_IMPRESSION, trimmedKey, trimmedValue, embedText);
         return "已记下：" + trimmedKey + "=" + trimmedValue;
     }
 }

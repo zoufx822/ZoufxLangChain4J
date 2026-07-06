@@ -27,7 +27,7 @@ public class DeepSeekV4Props {
     public static class Chat {
         /** 思考档模型 ID（前端开思考时的流式主聊天），如 deepseek-v4-pro */
         private String thinkingModel;
-        /** 快档模型 ID（前端关思考的对话 + 摘要压缩 + 情绪快速分类），如 deepseek-v4-flash */
+        /** 快档模型 ID（前端关思考的对话 + 锚点摘要压缩），如 deepseek-v4-flash */
         private String fastModel = "deepseek-v4-flash";
         private int maxTokens = 4096;
     }

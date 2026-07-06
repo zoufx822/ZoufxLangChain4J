@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentMap;
  * {@link #set}；{@code PromptComposer.compose()} 在 event loop 上 {@link #get}（纯内存读）；
  * 流终态统一 {@link #remove}。同 anchorId double-send 接受"最后写赢"，不做请求级隔离。
  *
- * <p>替代原 {@code RecallContextHolder}，将召回段与其余 prompt 数据合并为单一入口。
+ * <p>召回段与其余 prompt 数据（soul / 印象 / 锚点）合并为单一入口，compose 不再逐项访问 DB。
  */
 @Component
 public class PromptContextHolder {

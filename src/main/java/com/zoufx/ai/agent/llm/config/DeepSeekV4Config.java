@@ -112,7 +112,7 @@ public class DeepSeekV4Config {
         return EFFORT_DEFAULT;
     }
 
-    /** 同步模型：情绪快速分类 + 锚点摘要压缩，不参与流式聊天主路（恒用快档 + thinking 关闭）。 */
+    /** 同步模型：锚点摘要压缩，不参与流式聊天主路（恒用快档 + thinking 关闭）。 */
     @Bean
     public ChatModel syncChatModel() {
         String model = props.getChat().getFastModel();

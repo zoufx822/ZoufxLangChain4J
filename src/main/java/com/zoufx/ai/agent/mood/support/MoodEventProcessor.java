@@ -108,7 +108,7 @@ public class MoodEventProcessor {
         return moods;
     }
 
-    /** 构造 mood 事件 JSON payload；对 keyword 做 JSON 转义。供瞬时分类情绪复用同一格式。 */
+    /** 构造 mood 事件 JSON payload；对 keyword 做 JSON 转义。 */
     public static String moodPayload(String keyword) {
         return "{\"keyword\":\"" + JsonStrings.escape(keyword) + "\"}";
     }

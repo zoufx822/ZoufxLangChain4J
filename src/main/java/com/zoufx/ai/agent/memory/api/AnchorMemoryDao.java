@@ -48,9 +48,9 @@ public interface AnchorMemoryDao {
     /**
      * 标记锚点为活跃——更新 last_active_at = now，同时把 summary 置 NULL（回访场景，旧摘要作废），
      * 并把本轮 AI 最后一次 mood 写入 last_mood（COALESCE 语义：null 不覆盖旧值，保留"上次的情绪"）。
-     * 由 ChatService.onStreamComplete 调用。
+     * 由 {@code ChatService.persistTurn} 在事务内同步调用。
      */
-    Mono<Void> touchAsync(String anchorId, @Nullable String lastMood);
+    void touch(String anchorId, @Nullable String lastMood);
 
     /**
      * CAS 写入压缩摘要——仅当 last_active_at 与快照值一致时才写入。
@@ -61,13 +61,13 @@ public interface AnchorMemoryDao {
 
     /**
      * 仅当 title 为 null / 空白时填入——避免覆盖用户手动改过的标题。
-     * 由 ChatService.onStreamComplete 用首条用户消息截取后调用。
+     * 由 {@code ChatService.persistTurn} 用首条用户消息截取后在事务内同步调用。
      */
-    Mono<Void> updateTitleIfBlankAsync(String anchorId, String title);
+    void updateTitleIfBlank(String anchorId, String title);
 
     /**
      * 无条件覆盖 title——由前端 PATCH /ai/anchors/{anchorId}/title 用户手动改名时调。
-     * 与 {@link #updateTitleIfBlankAsync} 区分：后者只填空，本方法强写。
+     * 与 {@link #updateTitleIfBlank} 区分：后者只填空，本方法强写。
      */
     Mono<Void> updateTitleAsync(String anchorId, String title);
 

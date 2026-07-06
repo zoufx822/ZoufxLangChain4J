@@ -13,11 +13,11 @@ import java.util.List;
  * - {@link ChatMemoryDao}：滑窗 20 条，全量替换语义
  * - {@link ColdMemoryDao}：所有用户/AI 消息按时间序==只追加==，无上限
  *
- * 写入路径（不在 LC4J Hook 里做，避免与 LC4J 全量替换语义冲突）：
- * - {@code ChatService.prepare()}：接到请求 → append user prompt
- * - {@code ChatService.onStreamComplete()}：流结束 → append assistant text
+ * 写入路径：{@code ChatService.persistTurn()}——LLM 无错误跑完才在单事务内 append user + assistant
+ * 两行（经 {@link com.zoufx.ai.agent.memory.service.ColdMemoryService} 委托）；
+ * 失败/取消一律不写，不在 LC4J Hook 里做，避免与 LC4J 全量替换语义冲突。
  *
- * 当前不写入 tool_result（噪音大）。全部同步签名，调用方均在 boundedElastic 上。
+ * 当前不写入 tool_result（噪音大）。全部同步签名，调用方均在事务/boundedElastic 上。
  */
 public interface ColdMemoryDao {
 

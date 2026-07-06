@@ -66,6 +66,22 @@ public class AnchorService {
         return resolveOrCreate(anchorId, userId);
     }
 
+    /**
+     * 标记锚点为活跃——同步本体，供 {@code ChatService.persistTurn} 事务内同步调用。
+     * 无反应式调用方，不加 xxxAsync 壳。
+     */
+    public void touch(String anchorId, @Nullable String lastMood) {
+        anchorMemoryDao.touch(anchorId, lastMood);
+    }
+
+    /**
+     * 仅当 title 为空时填入首条用户消息截取——同步本体，供 {@code ChatService.persistTurn} 事务内同步调用。
+     * 无反应式调用方，不加 xxxAsync 壳。
+     */
+    public void updateTitleIfBlank(String anchorId, String title) {
+        anchorMemoryDao.updateTitleIfBlank(anchorId, title);
+    }
+
     public Mono<Void> compressAsync(String anchorId) {
         return Blocking.run(() -> compress(anchorId))
                 .onErrorResume(err -> {
@@ -89,7 +105,7 @@ public class AnchorService {
             log.info("Skip compression [anchorId={}]: empty transcript", anchorId);
             return;
         }
-        String summary = callLLM(transcript);
+        String summary = summarize(transcript);
         anchorMemoryDao.updateSummaryIfUnchanged(anchorId, summary, snapshotAt);
         log.info("Anchor summary saved [anchorId={}] len={}", anchorId, summary.length());
     }
@@ -113,7 +129,7 @@ public class AnchorService {
         return anchorId != null ? anchorId : anchorMemoryDao.create(userId);
     }
 
-    private String callLLM(String transcript) {
+    private String summarize(String transcript) {
         String prompt = String.format(SUMMARY_PROMPT_TEMPLATE, transcript);
         String raw = chatModel.chat(UserMessage.from(prompt)).aiMessage().text();
         if (raw == null) return "";

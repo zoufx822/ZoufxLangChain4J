@@ -117,16 +117,6 @@ public class AnchorMemoryDaoImpl implements AnchorMemoryDao {
     }
 
     @Override
-    public Mono<Void> touchAsync(String anchorId, @Nullable String lastMood) {
-        return Blocking.run(() -> touch(anchorId, lastMood));
-    }
-
-    @Override
-    public Mono<Void> updateTitleIfBlankAsync(String anchorId, String title) {
-        return Blocking.run(() -> updateTitleIfBlank(anchorId, title));
-    }
-
-    @Override
     public Mono<Void> updateTitleAsync(String anchorId, String title) {
         return Blocking.run(() -> updateTitle(anchorId, title));
     }
@@ -143,7 +133,8 @@ public class AnchorMemoryDaoImpl implements AnchorMemoryDao {
         }
     }
 
-    private void updateTitleIfBlank(String anchorId, String title) {
+    @Override
+    public void updateTitleIfBlank(String anchorId, String title) {
         // 仅当 title IS NULL 或为空白时才填——避免覆盖用户手动改过的标题
         jdbc.update("""
                 UPDATE anchor_memory
@@ -154,6 +145,14 @@ public class AnchorMemoryDaoImpl implements AnchorMemoryDao {
 
     private void updateTitle(String anchorId, String title) {
         jdbc.update("UPDATE anchor_memory SET title = ? WHERE id = ?", title, anchorId);
+    }
+
+    @Override
+    public void touch(String anchorId, @Nullable String lastMood) {
+        // 回访锚点：last_active_at 推到 now + summary 置 NULL（旧摘要作废，下次切走再压）
+        // last_mood 走 COALESCE：本轮无 mood 事件时保留旧值，不被 null 覆盖
+        jdbc.update("UPDATE anchor_memory SET last_active_at = ?, summary = NULL, last_mood = COALESCE(?, last_mood) WHERE id = ?",
+                System.currentTimeMillis(), lastMood, anchorId);
     }
 
     private List<AnchorMemory> listByUser(String userId) {
@@ -172,12 +171,5 @@ public class AnchorMemoryDaoImpl implements AnchorMemoryDao {
                         rs.getLong("created_at"),
                         rs.getLong("last_active_at")),
                 userId);
-    }
-
-    private void touch(String anchorId, @Nullable String lastMood) {
-        // 回访锚点：last_active_at 推到 now + summary 置 NULL（旧摘要作废，下次切走再压）
-        // last_mood 走 COALESCE：本轮无 mood 事件时保留旧值，不被 null 覆盖
-        jdbc.update("UPDATE anchor_memory SET last_active_at = ?, summary = NULL, last_mood = COALESCE(?, last_mood) WHERE id = ?",
-                System.currentTimeMillis(), lastMood, anchorId);
     }
 }

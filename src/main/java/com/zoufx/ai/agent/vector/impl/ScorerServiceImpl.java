@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 规则评分（v0.2 起步版）。不跑 LLM——按消息来源 / 长度 / 偏好信号 / 是否提及称呼加权。
+ * 规则评分——不跑 LLM，按消息来源 / 长度 / 偏好信号 / 是否提及称呼加权。
  *
  * <p>基础分：significant-event / commitment = 0.7（本就是重要记忆）；user-impression = 0.6；
  * cold 按 user=0.5 / assistant=0.3。最终 clamp 到 [0,1]。

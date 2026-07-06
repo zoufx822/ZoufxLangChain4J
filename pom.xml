@@ -13,7 +13,7 @@
 
     <groupId>com.zoufx</groupId>
     <artifactId>ZoufxAIAgent</artifactId>
-    <version>0.2.2-SNAPSHOT</version>
+    <version>0.2.3-SNAPSHOT</version>
     <name>ZoufxAIAgent</name>
     <description>Java LLM Integration Project</description>
     <packaging>jar</packaging>
