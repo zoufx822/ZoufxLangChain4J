@@ -4,6 +4,8 @@ import com.zoufx.ai.agent.llm.model.Features;
 import com.zoufx.ai.agent.chat.model.AnchorContextView;
 import com.zoufx.ai.agent.chat.model.AnchorTitleUpdateRequest;
 import com.zoufx.ai.agent.chat.model.ChatRequest;
+import com.zoufx.ai.agent.chat.model.StopRequest;
+import com.zoufx.ai.agent.chat.model.StopResult;
 import com.zoufx.ai.agent.chat.service.ChatService;
 import com.zoufx.ai.agent.chat.service.AnchorService;
 import com.zoufx.ai.agent.chat.support.ChatMessageMapper;
@@ -30,10 +32,12 @@ import java.util.Map;
  *
  * <p>端点：
  * <ul>
- *   <li>{@code POST   /ai/chat}：SSE 流式聊天（按 anchorId 隔离；anchorId 为空时懒创建锚点）</li>
+ *   <li>{@code POST   /ai/chat}：SSE 流式聊天（首帧 turn_started 事件带 turnId；anchorId 为空时懒创建锚点）</li>
+ *   <li>{@code POST   /ai/chat/stop}：主动停止一轮（consumeStream 下断连≠停止，停止必须独立端点）</li>
  *   <li>{@code GET    /ai/features}：LLM 能力声明</li>
  *   <li>{@code GET    /ai/anchors?userId=X}：列出该用户全部锚点（sidebar）</li>
  *   <li>{@code GET    /ai/anchors/{anchorId}/messages}：加载锚点消息历史（滑动窗口，默认 20 条）</li>
+ *   <li>{@code GET    /ai/anchors/{anchorId}/pending}：该锚点的在建轮问题（consumeStream 轮询用）</li>
  *   <li>{@code GET    /ai/anchors/{anchorId}/context}：其他锚点三层衰减视图（near/mid/far）</li>
  *   <li>{@code PATCH  /ai/anchors/{anchorId}/title}：手动重命名锚点</li>
  *   <li>{@code GET    /ai/memory/hot?userId=X&type=Y}：Hot Memory snapshot（用户级）</li>
@@ -61,13 +65,22 @@ public class ChatController {
         response.getHeaders().set("Cache-Control", "no-cache");
 
         String prompt = request.prompt().trim();
-        log.info("Received prompt [anchorId={}, prevAnchorId={}, thinking={}]: {}",
-                request.anchorId(), request.prevAnchorId(), request.thinking(), prompt);
+        log.info("Received prompt [anchorId={}, thinking={}]: {}",
+                request.anchorId(), request.thinking(), prompt);
 
-        // 锚点切换压缩 + 懒建本次锚点，都下沉到 ChatService→AnchorService.openTurn 统一处理
-        return chatService.chat(request.anchorId(), request.prevAnchorId(),
-                        prompt, request.thinking(), request.userId())
+        // anchorId 为空时懒建锚点；上一锚点压缩改由后端定时扫描，不再靠前端传 prevAnchorId
+        return chatService.chat(request.anchorId(), prompt, request.thinking(), request.userId())
                 .map(e -> ServerSentEvent.<String>builder().event(e.type()).data(e.data()).build());
+    }
+
+    /**
+     * 主动停止一轮生成——consumeStream 下「断连≠停止」，停止必须独立端点（另一个 HTTP 请求，到不了正在
+     * 生成的那个请求）。返回 {@code {stopped}}：true=已掐断且不落库；false=该轮已完成落库或已停，前端保留不删。
+     * 纯内存非阻塞，直接同步返回。
+     */
+    @PostMapping("/chat/stop")
+    public StopResult stopTurn(@Valid @RequestBody StopRequest request) {
+        return chatService.stop(request.turnId());
     }
 
     @GetMapping("/features")
@@ -90,6 +103,16 @@ public class ChatController {
                 .map(list -> list.stream()
                         .map(ChatMessageMapper::toMessageView)
                         .toList());
+    }
+
+    /**
+     * 该锚点当前是否有在建轮——{@code {turnId, prompt}} 或空 {@code {}}。前端打开对话时并发拉 messages +
+     * pending：pending 非空 → 显示「问题 + 生成中」并轮询 messages 等落库回复（consumeStream 下生成脱离连接，
+     * write-back 期间 loadMessages 看不到该轮，故必须问注册表）。纯内存非阻塞，直接同步返回。
+     */
+    @GetMapping("/anchors/{anchorId}/pending")
+    public Map<String, String> pending(@PathVariable String anchorId) {
+        return chatService.pending(anchorId);
     }
 
     /**

@@ -15,31 +15,42 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 /**
- * 锚点服务——承载对话锚点的生命周期业务：
+ * 锚点服务——承载对话锚点的生命周期业务。
+ *
  * <ul>
- *   <li>{@link #openTurn}：开启新一轮（压上一锚点 + 解析/懒建本次锚点），供 ChatService 调用；</li>
- *   <li>{@link #compressAsync}：用同步 ChatModel 把消息流压成短摘要写回 anchor.summary 缓存；</li>
- *   <li>{@link #anchorContextAsync}：其他锚点三层衰减视图（near/mid/far）的组装。</li>
+ *   <li>{@link #compactIdleAnchors}：由定时器触发，扫描空闲锚点并逐个增量压缩；</li>
+ *   <li>{@link #touch} / {@link #updateTitleIfBlank}：persistTurn 事务内的锚点写；</li>
+ *   <li>{@link #anchorContextAsync}：其他锚点三层衰减视图（near/mid/far）。</li>
  * </ul>
  *
- * <p>压缩以 fire-and-forget 形式 subscribe()，失败仅记日志，不阻断主聊天流。
+ * <p>压缩在定时器线程同步执行，失败仅记日志不阻断下次扫描。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AnchorService {
 
-    /** 摘要 prompt 模板——%s 处填入格式化好的对话文本。 */
+    /**
+     * 增量摘要 prompt 模板——第一个 %s 填「已有记忆」（可能为空），第二个填「最近的对话」。
+     * 以小Z 第一人称记忆视角维护一条滚动记忆：把新对话融进旧记忆，产出更新后的完整记忆。
+     */
     private static final String SUMMARY_PROMPT_TEMPLATE = """
-            请对下面这段对话做一个简洁的中文摘要（200 字以内），用客观第三人称叙述。
-            摘要要捕捉：双方主要谈论的话题、达成的关键结论或承诺、对方在此次对话中表现出的状态或情绪。
-            不要使用"你/我"，统一用"对方"指代用户、"AI"指代助手。
-            只输出摘要正文本身，不要前缀（如"摘要："）也不要包裹引号。
+            请以「小Z」（也就是你自己）的第一人称视角，维护一条关于你和对方这段对话的记忆（200 字以内）。
+            下面给你「已有记忆」（可能为空）和「最近的对话」——把最近对话里的新信息融进已有记忆，产出一条更新后的完整记忆：
+            保留仍然重要的旧内容、补上新进展、丢掉已过时的细节。
+            用「我」指代自己、「对方」指代用户，像在写自己的记忆：我和对方聊了什么、达成了什么、对方当时是什么状态或情绪。
+            只输出更新后的记忆正文本身，不要前缀（如"摘要："）也不要包裹引号。
 
-            对话内容：
+            已有记忆：
+            ---
+            %s
+            ---
+            最近的对话：
             ---
             %s
             ---
@@ -52,19 +63,6 @@ public class AnchorService {
     private final ChatModel chatModel;
     private final ChatMemoryDao chatMemoryDao;
     private final AnchorMemoryDao anchorMemoryDao;
-
-    /**
-     * 开启新一轮对话的锚点处理，返回本次要用的 anchorId：
-     * 压缩上一锚点（旁路 fire-and-forget，不阻塞主流程）+ 解析/懒建本次锚点。
-     * 供 ChatService 在准备阶段调用；须在非 event loop 线程上跑（内含阻塞建锚）。
-     */
-    public String openTurn(@Nullable String anchorId, @Nullable String prevAnchorId, String userId) {
-        if (prevAnchorId != null && !prevAnchorId.isBlank()) {
-            log.info("Anchor switch detected, compressing prevAnchorId={}", prevAnchorId);
-            compressAsync(prevAnchorId).subscribe();
-        }
-        return resolveOrCreate(anchorId, userId);
-    }
 
     /**
      * 标记锚点为活跃——同步本体，供 {@code ChatService.persistTurn} 事务内同步调用。
@@ -82,17 +80,10 @@ public class AnchorService {
         anchorMemoryDao.updateTitleIfBlank(anchorId, title);
     }
 
-    public Mono<Void> compressAsync(String anchorId) {
-        return Blocking.run(() -> compress(anchorId))
-                .onErrorResume(err -> {
-                    log.warn("Anchor compression failed [anchorId={}]: {}", anchorId, err.toString());
-                    return Mono.empty();
-                });
-    }
-
     /**
-     * 压缩指定锚点的消息流为短摘要，写入 anchor.summary。
-     * 流水线是顺序阻塞 IO（DB 读 → LLM → DB CAS 写），调用方需保证不在 event loop 上。
+     * 增量压缩指定锚点：把「已有摘要 + 当前窗口对话」喂给 LLM 产出更新后的滚动摘要，CAS 写回 + 推进水位。
+     * 流水线是顺序阻塞 IO（DB 读 → LLM → DB CAS 写），调用方须保证不在 event loop 上。
+     * 转录为空（空锚点）只推进水位、不调 LLM，避免被扫描反复挑中。
      */
     private void compress(String anchorId) {
         Long snapshotAt = anchorMemoryDao.snapshotActiveAt(anchorId);
@@ -102,12 +93,24 @@ public class AnchorService {
         }
         String transcript = formatTranscript(chatMemoryDao.loadByAnchorId(anchorId));
         if (transcript.isBlank()) {
-            log.info("Skip compression [anchorId={}]: empty transcript", anchorId);
+            anchorMemoryDao.bumpSummarizedAt(anchorId, snapshotAt);  // 空锚点：标记「已处理到此」，别再挑
             return;
         }
-        String summary = summarize(transcript);
+        String summary = summarize(anchorMemoryDao.loadSummary(anchorId), transcript);
         anchorMemoryDao.updateSummaryIfUnchanged(anchorId, summary, snapshotAt);
         log.info("Anchor summary saved [anchorId={}] len={}", anchorId, summary.length());
+    }
+
+    /**
+     * 扫描空闲超 1h 且自上次摘要后有新内容的锚点，逐个增量压缩。
+     * 本方法涉及 DB + LLM 阻塞 IO，调用方须保证不在 event loop 上（定时器线程可接受）。
+     */
+    public void compactIdleAnchors() {
+        long idleBefore = System.currentTimeMillis() - Duration.ofHours(1).toMillis();
+        List<String> ids = anchorMemoryDao.findAnchorsNeedingCompaction(idleBefore);
+        if (ids.isEmpty()) return;
+        log.info("Anchor compaction scan: {} idle anchor(s) with new content", ids.size());
+        for (String id : ids) compress(id);
     }
 
     public Mono<AnchorContextView> anchorContextAsync(String anchorId) {
@@ -119,18 +122,15 @@ public class AnchorService {
      * anchorId 不存在返回空结构，让前端统一走"这是我们的第一次对话"空态。
      */
     private AnchorContextView anchorContext(String anchorId) {
-        String userId = anchorMemoryDao.findUserId(anchorId);
-        if (userId == null) return AnchorContextView.empty();
-        return AnchorContextView.from(anchorMemoryDao.listOtherAnchors(userId, anchorId));
+        return Optional.ofNullable(anchorMemoryDao.findUserId(anchorId))
+                .map(userId -> AnchorContextView.from(anchorMemoryDao.listOtherAnchors(userId, anchorId)))
+                .orElseGet(AnchorContextView::empty);
     }
 
-    /** 解析本次锚点：为空则懒建新锚返回新 id，非空原样返回。建锚失败为硬错误，直接抛出。 */
-    private String resolveOrCreate(@Nullable String anchorId, String userId) {
-        return anchorId != null ? anchorId : anchorMemoryDao.create(userId);
-    }
-
-    private String summarize(String transcript) {
-        String prompt = String.format(SUMMARY_PROMPT_TEMPLATE, transcript);
+    /** 增量摘要：已有记忆（可空）+ 最近对话 → 更新后的记忆。截断防撑爆注入预算。 */
+    private String summarize(@Nullable String existingSummary, String transcript) {
+        String existing = Optional.ofNullable(existingSummary).filter(s -> !s.isBlank()).orElse("（暂无）");
+        String prompt = String.format(SUMMARY_PROMPT_TEMPLATE, existing, transcript);
         String raw = chatModel.chat(UserMessage.from(prompt)).aiMessage().text();
         if (raw == null) return "";
         String trimmed = raw.trim();
@@ -138,7 +138,8 @@ public class AnchorService {
     }
 
     /**
-     * 把消息流格式化为「对方: ... / AI: ...」纯文本。
+     * 把消息流格式化为「对方: ... / 我: ...」纯文本。
+     * AI 行用「我」标签——让喂给摘要模型的转录本身就是小Z 第一人称框架，输出更稳。
      * 跳过 system / tool 类消息——摘要场景只关心双方对话内容。
      */
     private String formatTranscript(List<ChatMessage> messages) {
@@ -149,7 +150,7 @@ public class AnchorService {
             } else if (m instanceof AiMessage a) {
                 String text = a.text();
                 if (text == null || text.isBlank()) continue;
-                sb.append("AI: ").append(text).append("\n");
+                sb.append("我: ").append(text).append("\n");
             }
         }
         return sb.toString();

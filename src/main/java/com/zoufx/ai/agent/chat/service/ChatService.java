@@ -12,13 +12,17 @@ import com.zoufx.ai.agent.memory.service.ColdMemoryService;
 import com.zoufx.ai.agent.memory.service.HotMemoryService;
 import com.zoufx.ai.agent.memory.support.HotMemoryType;
 import com.zoufx.ai.agent.chat.model.ChatEvent;
-import com.zoufx.ai.agent.chat.model.ChatPrepared;
+import com.zoufx.ai.agent.chat.model.CommitResult;
+import com.zoufx.ai.agent.chat.model.StopResult;
 import com.zoufx.ai.agent.chat.model.Thinking;
 import com.zoufx.ai.agent.prompt.impl.RecallPromptImpl;
 import com.zoufx.ai.agent.prompt.support.PromptContext;
 import com.zoufx.ai.agent.prompt.support.PromptContextHolder;
 import com.zoufx.ai.agent.mood.support.MoodEventProcessor;
 import com.zoufx.ai.agent.chat.support.RetryableExceptions;
+import com.zoufx.ai.agent.chat.support.Turn;
+import com.zoufx.ai.agent.chat.support.TurnHandle;
+import com.zoufx.ai.agent.chat.support.TurnRegistry;
 import com.zoufx.ai.agent.tool.support.WebSearchEvents;
 import com.zoufx.ai.agent.vector.api.IndexerService;
 import com.zoufx.ai.agent.vector.api.RecallService;
@@ -27,7 +31,6 @@ import com.zoufx.ai.agent.vector.property.RecallProps;
 import com.zoufx.ai.agent.vector.support.VectorPayload;
 import com.zoufx.ai.agent.tool.support.ToolNameMap;
 import dev.langchain4j.data.embedding.Embedding;
-import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,37 +41,37 @@ import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 import reactor.util.retry.Retry;
 
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 聊天编排服务——一个类里可读到完整对话生命周期：
  *
  * <pre>
  *   chat()
- *     ├── prepare()              boundedElastic 上同步准备：开一轮 + seed + embed + 召回 + PromptContext
- *     └── buildStream()          Flux 主体——单条 LLM 主流，挂五个生命周期钩子：
- *           Flux.create(bridgeTokenStream).subscribeOn(bE).retryWhen(...)   订阅侧落 boundedElastic
- *           .publishOn(boundedElastic)   下行信号搬到可阻塞线程，使 doOnComplete 能同步跑事务
- *           .doOnNext      收全文       turn::collectContent
- *           .doOnComplete  成功→落库     persistTurn
- *           .doOnCancel    取消→掐上游    cancelTurn
- *           .doFinally     终态→清理      releaseTurn（PromptContext + pending）
- *           .onErrorResume 失败→记日志+收尾成 error 帧   failureEvent
+ *     ├── prepare()              boundedElastic 上同步准备：开一轮 + seed + embed + 召回 + PromptContext，产出 Turn（自带 turnId）
+ *     └── buildStream()          生成脱离客户端连接（consumeStream）：
+ *           后端自持订阅  buildGenerationFlux(turn).subscribe(...)   驱动生成、落库，与客户端在不在无关
+ *             Flux.create(bridgeTokenStream).subscribeOn(bE).retryWhen(...).publishOn(bE)
+ *             .doOnNext      收全文     turn::collectContent
+ *             .doOnComplete  成功→落库   persistTurn（先 claim 抢终局，未被停止才落）
+ *             .doFinally     终态→清理   releaseTurn + 注册表移除
+ *           客户端 SSE = sink.asFlux()（Sinks.replay().all()，视图）
+ *             断连 = 取消视图，不动后端订阅（生成继续跑完落库）；错误经 sink 收尾成 error 帧
  * </pre>
  *
  * <p>情绪单一来源：主模型在正文里打 {@code ⟦mood:X⟧} 标记（开头必打第一反应 + 转折按需追加），
  * 由 {@code MoodEventProcessor} 剥离成独立 mood 事件——不再另起一次 LLM 快速分类支。
  *
- * <p>四个 doOn* 钩子处理正常生命周期；错误处理集中在末尾一个 onErrorResume（记日志 + 把错误收尾成
- * 客户端 error 帧）。「产出一个兜底事件」只能用恢复族、偷窥族 doOn* 干不了，故错误就一个出口、不硬拆两支。
- * publishOn 使 doOnComplete 里的阻塞事务可同步直调而不碰 event loop，且天然排在 doFinally 之前——
- * 故 pending 的 discard 统一在 releaseTurn 一处（成功轮必在 commit 之后）；失败/取消 persistTurn 不运行、零残留。
+ * <p>关键：生成挂在后端自己的订阅上，客户端 SSE 只是 replay sink 的一个视图。关页/断网/刷新只取消视图，
+ * 后端订阅照跑到底并落库（用户回来轮询到完整回复）；主动停止走独立端点 {@link #stop}（掐 handle + dispose
+ * 订阅），而非把「断连」当停止。落库/清理都挂后端订阅（doOnComplete/doFinally），与客户端在不在解耦。
  */
 @Slf4j
 @Service
@@ -80,11 +83,13 @@ public class ChatService {
 
     /** 流式对话端口：按 thinking 开关路由到合适的模型/参数，屏蔽 profile 间的 per-call 能力差异。 */
     private final StreamingChatPort streamingChatPort;
+    /** 在建轮注册表——stop 端点与 GET pending 靠它定位一轮；生成脱离连接后这是唯一的定位处。 */
+    private final TurnRegistry turnRegistry;
     /** 会话窗口业务层——LC4J ChatMemoryStore 契约 + write-back 缓冲。 */
     private final ChatMemoryService chatMemoryService;
     /** 锚点只读——prepare 组装 PromptContext 用。 */
     private final AnchorMemoryDao anchorMemoryDao;
-    /** 锚点生命周期业务——开一轮 + touch/title（同步，事务内）。 */
+    /** 锚点生命周期业务——touch/title（同步，事务内）+ 摘要压缩。 */
     private final AnchorService anchorService;
     /** 长期对话原文归档业务层——persistTurn 事务内 append。 */
     private final ColdMemoryService coldMemoryService;
@@ -108,13 +113,11 @@ public class ChatService {
     private final TransactionTemplate tx;
 
     /**
-     * 完整对话流程：prepare（锚点创建 + 召回准备）→ 组一个 Turn → LLM 流式对话。
+     * 完整对话流程：prepare（锚点创建 + 召回准备，直接产出 Turn）→ LLM 流式对话。
      * prepare 期间的硬错误在此兜底成一条 error 帧（buildStream 内部错误已由其自身收尾，不会漏到这）。
      */
-    public Flux<ChatEvent> chat(@Nullable String anchorId, @Nullable String prevAnchorId,
-                                String prompt, Thinking thinking, String userId) {
-        return Blocking.call(() -> prepare(userId, anchorId, prevAnchorId, prompt))
-                .map(prepared -> new Turn(prepared, userId, prompt))
+    public Flux<ChatEvent> chat(@Nullable String anchorId, String prompt, Thinking thinking, String userId) {
+        return Blocking.call(() -> prepare(userId, anchorId, prompt))
                 .flatMapMany(turn -> buildStream(thinking, turn))
                 .onErrorResume(err -> {
                     log.error("Chat prepare failed [userId={}]", userId, err);
@@ -123,60 +126,88 @@ public class ChatService {
     }
 
     /**
-     * 在 {@code assistant.chat()} 启动前同步完成，返回解析后的锚点信息。
+     * 在 {@code assistant.chat()} 启动前同步完成，直接构建本轮 {@link Turn}（turnId + 解析后的锚点 + 预计算向量）。
      *
-     * <p>锚点开一轮（{@code anchorService.openTurn}：压上一锚点 + 解析/懒建）+
-     * {@code chatMemoryService.seed}（committed 灌进 pending）在 try 外——硬错误，直接传播；
-     * embed / 召回 / PromptContext 构建失败吞掉（辅助能力，不阻断对话）。
+     * <p>懒建锚点（anchorId 为空则新建）+ {@code chatMemoryService.seed}（committed 灌进 pending）在 try 外——
+     * 硬错误，直接传播；embed / 召回 / PromptContext 构建失败吞掉（辅助能力，不阻断对话，userEmbedding 留空）。
+     * 上一锚点的压缩不在此触发——改由 {@link com.zoufx.ai.agent.chat.support.ChatScheduler} 定时按空闲检测。
      */
-    private ChatPrepared prepare(String userId, @Nullable String anchorId,
-                                 @Nullable String prevAnchorId, String prompt) {
-        boolean newAnchor = anchorId == null;
-        anchorId = anchorService.openTurn(anchorId, prevAnchorId, userId);
-        chatMemoryService.seed(anchorId);
-        Embedding emb = null;
+    private Turn prepare(String userId, @Nullable String anchorId, String prompt) {
+        Turn turn = Turn.builder()
+                .userId(userId)
+                .prompt(prompt)
+                .newAnchor(anchorId == null)
+                .anchorId(Optional.ofNullable(anchorId).orElseGet(() -> anchorMemoryDao.create(userId)))
+                .build();
+                
+        chatMemoryService.seed(turn.anchorId);
+
         try {
             // prompt 向量化：召回 query + persistTurn 索引 cold user 行复用同一份，避免重复嵌入
-            emb = embeddingModel.embed(prompt).content();
+            Embedding emb = embeddingModel.embed(prompt).content();
+            turn = turn.toBuilder().userEmbedding(emb).build();
+            // 借 chat window 大小在 cold_memory（跨锚点全量）近似出一个时间下界：
+            // 同一轮消息会同时落 chat_memory（发给 LLM 的原文）和 cold_memory（可召回索引），不排除的话，
+            // 刚发生的对话会被召回换个格式重复塞进 system prompt，让 LLM 把"刚说的话"误当成"想起的旧记忆"。
             Long windowSince = coldMemoryDao.windowLowerBound(userId, chatProps.getLoadMessage());
             List<RecallResult> recalled = recallService.recall(userId, emb, recallProps.getLimit(), windowSince);
-            // 一次性构造 PromptContext，compose() 在 event loop 上纯内存读，不再访问 DB
-            promptContextHolder.set(anchorId, new PromptContext(
-                    anchorId,
+            promptContextHolder.set(turn.anchorId, new PromptContext(
+                    turn.anchorId,
                     userId,
                     soulDao.snapshot(),
                     hotMemoryDao.snapshot(userId, HotMemoryType.USER_IMPRESSION),
-                    anchorMemoryDao.listOtherAnchors(userId, anchorId),
+                    anchorMemoryDao.listOtherAnchors(userId, turn.anchorId),
                     RecallPromptImpl.format(recalled)
             ));
         } catch (Exception e) {
-            log.warn("Prepare failed, skip auto-association [anchorId={}]: {}", anchorId, e.toString());
+            log.warn("Prepare failed, skip auto-association [anchorId={}]: {}", turn.anchorId, e.toString());
         }
-        return new ChatPrepared(anchorId, newAnchor, emb);
+        return turn;
     }
 
     /**
-     * 组装 Flux 管道：单条 LLM 主流 publishOn 到 boundedElastic 后挂五个生命周期钩子，
-     * 末尾把错误收尾成 error 帧。新锚点时把 anchor_created 置为首条事件。
+     * 生成脱离客户端连接（consumeStream）：生成挂在后端自持订阅上，客户端 SSE 只是 replay sink 的一个视图。
+     * 关页/断网只取消视图，后端订阅照跑到底并落库；主动停止走独立端点 {@link #stop}，而非把断连当停止。
      */
     private Flux<ChatEvent> buildStream(Thinking thinking, Turn turn) {
-        // 两个 Schedulers 各管一侧、不重复：
-        //  subscribeOn（在 retryWhen 前）——订阅侧：bridgeTokenStream 的 LC4J .start() 落在 boundedElastic，
-        //    尤其让 retryWhen 的重订阅也在 boundedElastic（否则默认在 parallel 重订阅）。
-        //  publishOn（在 retryWhen 后）——下行侧：doOnNext/doOnComplete（含阻塞的 persistTurn 事务）搬到
-        //    boundedElastic，不占 LC4J 回调线程、不碰 event loop。
-        Flux<ChatEvent> stream = Flux.<ChatEvent>create(sink -> bridgeTokenStream(sink, thinking, turn))
+        // replay().all()：客户端视图是 controller 返回后才订阅（晚一步），靠回放拿到下面先发的开头帧
+        Sinks.Many<ChatEvent> sink = Sinks.many().replay().all();
+        sink.tryEmitNext(new ChatEvent("turn_started", turn.turnId));
+        if (turn.newAnchor) sink.tryEmitNext(new ChatEvent("anchor_created", turn.anchorId));
+
+        // 后端自持订阅：驱动生成、把事件转进 sink，并开一轮登记（供停止/轮询定位）——与客户端在不在无关
+        turnRegistry.register(turn);
+        turn.setBackendSub(buildGenerationFlux(thinking, turn).subscribe(
+                sink::tryEmitNext,
+                err -> {   // 出错：记日志 + 传给 sink（doOnComplete 不触发→不落库）
+                    log.error("Stream failed [anchorId={}, userId={}]", turn.anchorId, turn.userId, err);
+                    sink.tryEmitError(err);
+                },
+                sink::tryEmitComplete));
+
+        // 客户端 SSE = sink 视图：断连只取消它（生成继续跑完落库），错误收尾成一帧 error（仅给还连着的客户端）
+        return sink.asFlux()
+                .doOnCancel(() -> log.info("Client disconnected, generation continues [turnId={}, anchorId={}]",
+                        turn.turnId, turn.anchorId))
+                .onErrorResume(err -> Flux.just(new ChatEvent("error", "AI 服务异常，请稍后重试")));
+    }
+
+    /**
+     * 后端订阅的生成主流：单条 LLM 主流 publishOn 到 boundedElastic 后挂三个生命周期钩子。
+     * subscribeOn（retryWhen 前）让 LC4J {@code .start()} + 重订阅落 boundedElastic；publishOn（retryWhen 后）
+     * 让 doOnComplete 的阻塞落库事务落可阻塞线程。落库/清理都挂这条链，与客户端在不在无关（成功才落）。
+     */
+    private Flux<ChatEvent> buildGenerationFlux(Thinking thinking, Turn turn) {
+        return Flux.<ChatEvent>create(s -> bridgeTokenStream(s, thinking, turn))
                 .subscribeOn(Schedulers.boundedElastic())
                 .retryWhen(buildRetrySpec(turn.hasEmitted))
                 .publishOn(Schedulers.boundedElastic())
                 .doOnNext(turn::collectContent)                    // 收全文
-                .doOnComplete(() -> persistTurn(turn))             // 成功：单事务落库 + 索引
-                .doOnCancel(() -> cancelTurn(turn))            // 取消：掐断上游 LLM 流
-                .doFinally(signal -> releaseTurn(turn))            // 终态：清 PromptContext + pending
-                .onErrorResume(err -> failureEvent(turn, err));    // 失败：记日志 + 收尾成 error 帧
-        return turn.newAnchor
-                ? Flux.just(new ChatEvent("anchor_created", turn.anchorId)).concatWith(stream)
-                : stream;
+                .doOnComplete(() -> persistTurn(turn))             // 成功：先 claim 抢终局，未被停止才单事务落库 + 索引
+                .doFinally(signal -> {                             // 终态：清 PromptContext + pending，移除注册表（防泄漏）
+                    releaseTurn(turn);
+                    turnRegistry.remove(turn.turnId);
+                });
     }
 
     /**
@@ -223,15 +254,20 @@ public class ChatService {
                 .start();
     }
 
-    // ====== 五个生命周期钩子 ======
+    // ====== 生命周期钩子 ======
 
     /**
-     * doOnComplete——成功轮：一个事务落 chat + cold(user/assistant) + hot + anchor(touch/title)，
-     * 要么全落要么全不落（防崩在提交中途留跨表半截）；事务提交成功后再 fire-and-forget 索引 Qdrant
-     * （向量是派生索引，绝不能先于正本提交，否则回滚留孤儿向量）。自吞异常——用户已看到完整回复，
-     * 落库失败只记日志、不外发 error 帧。借 publishOn 已在 boundedElastic 上，故阻塞事务可同步直调。
+     * doOnComplete——成功轮：先 CAS 抢本轮终局（与主动停止竞争，抢不到=已被停止接管→不落库），抢到则
+     * 一个事务落 chat + cold(user/assistant) + hot + anchor(touch/title)，要么全落要么全不落（防崩在提交中途
+     * 留跨表半截）；事务提交成功后再 fire-and-forget 索引 Qdrant（向量是派生索引，绝不能先于正本提交，否则
+     * 回滚留孤儿向量）。自吞异常——用户已看到完整回复，落库失败只记日志。借 publishOn 已在 boundedElastic 上，
+     * 故阻塞事务可同步直调。
      */
     private void persistTurn(Turn turn) {
+        if (!turn.claim()) {
+            log.info("Skip persist, turn claimed by stop [turnId={}, anchorId={}]", turn.turnId, turn.anchorId);
+            return;
+        }
         String lastMood = turn.lastMood();
         String moodTrail = turn.moodTrail();
         boolean hasContent = turn.hasContent();
@@ -256,24 +292,36 @@ public class ChatService {
         }
     }
 
-    /** onErrorResume——失败轮：记日志 + 把错误收尾成一帧 error 事件（管道唯一的错误出口；pending 由 releaseTurn 清）。 */
-    private Mono<ChatEvent> failureEvent(Turn turn, Throwable err) {
-        log.error("Stream failed [anchorId={}, userId={}]", turn.anchorId, turn.userId, err);
-        return Mono.just(new ChatEvent("error", "AI 服务异常，请稍后重试"));
-    }
-
-    /** doOnCancel——客户端断开：主动掐断上游 LLM 流，避免无人消费时继续烧 token。 */
-    private void cancelTurn(Turn turn) {
-        log.info("Stream cancelled [anchorId={}, userId={}]", turn.anchorId, turn.userId);
-        StreamingHandle h = turn.handle.get();
-        if (h != null && !h.isCancelled()) h.cancel();
-    }
-
     /** doFinally——终态统一清理：PromptContext + pending 缓冲（成功轮 persistTurn 已在此前同步提交完）。 */
     private void releaseTurn(Turn turn) {
         promptContextHolder.remove(turn.anchorId);
         chatMemoryService.discard(turn.anchorId);
         hotMemoryService.discard(turn.anchorId);
+    }
+
+    // ====== 停止 / 在建轮暴露（consumeStream 端点支撑） ======
+
+    /**
+     * 主动停止一轮：按 turnId 定位并 CAS 抢终局。抢到 → 掐 LC4J + dispose 后端订阅（触发 doFinally
+     * discard + 注册表移除，不落库）；抢不到 / 不存在（该轮已完成落库或已停）→ {@code stopped=false}，
+     * 前端据此保留该轮不删（否则删掉一条已存的成功轮，刷新又冒出来，自相矛盾）。
+     */
+    public StopResult stop(String turnId) {
+        TurnHandle t = turnRegistry.get(turnId);
+        if (t == null || !t.claim()) return new StopResult(false);
+        log.info("Turn stopped [turnId={}, anchorId={}]", turnId, t.anchorId());
+        t.abort();
+        return new StopResult(true);
+    }
+
+    /**
+     * 该锚点当前的在建轮问题——供 {@code GET pending}。write-back 下生成期间什么都没落库，loadMessages
+     * 看不到该轮，只能问注册表拿到问题原文，让另一端/刷新后先看到「问题 + 生成中」，再轮询补回复。
+     * 无在建轮返回空 Map（{}）。
+     */
+    public Map<String, String> pending(String anchorId) {
+        TurnHandle t = turnRegistry.findByAnchor(anchorId);
+        return t == null ? Map.of() : Map.of("turnId", t.turnId(), "prompt", t.prompt());
     }
 
     // ====== 事务后索引 ======
@@ -302,10 +350,6 @@ public class ChatService {
                 .subscribe();
     }
 
-    /** persistTurn 事务的返回值：cold 行 id（未写入为 -1）+ 本轮已落库的 hot 条目，供事务提交后索引用。 */
-    private record CommitResult(long coldUserId, long coldAssistantId, List<HotMemoryService.Entry> hotEntries) {
-    }
-
     /**
      * 指数退避重试策略——仅首次 emit 前对可重试错误生效。
      * {@code hasEmitted} 由 bridgeTokenStream 任一回调置位，避免流开始后重试（已部分发送的内容无法回滚）。
@@ -323,58 +367,5 @@ public class ChatService {
         if (s == null) return "";
         String trimmed = s.trim();
         return trimmed.length() <= max ? trimmed : trimmed.substring(0, max);
-    }
-
-    /**
-     * 一轮对话的可变流式状态——把原先散落在 buildStream 的局部变量收进一处，
-     * 让各生命周期钩子退化成一行委托（{@code turn::xxx} / {@code xxx(turn)}）。
-     * 累积字段跨线程访问（LC4J 回调线程写入 + boundedElastic/取消线程读取），故用线程安全类型。
-     */
-    private static final class Turn {
-        final String anchorId;
-        final String userId;
-        final String prompt;
-        @Nullable final Embedding userEmbedding;
-        final boolean newAnchor;
-
-        /** 重试守门：收到首个 token 后置位，禁止再重试（已发出的内容无法回滚）。 */
-        final AtomicBoolean hasEmitted = new AtomicBoolean(false);
-        /** 上游 LLM 流句柄：首个 token 回调时抓取，取消时掐断。 */
-        final AtomicReference<StreamingHandle> handle = new AtomicReference<>();
-        /** assistant 全文（LLM 主流写，无并发）。 */
-        private final StringBuilder assistant = new StringBuilder();
-        /** 正文内嵌情绪标签，按出现顺序（含开头必打的第一反应）。 */
-        final List<String> inlineMoods = new CopyOnWriteArrayList<>();
-
-        Turn(ChatPrepared prepared, String userId, String prompt) {
-            this.anchorId = prepared.anchorId();
-            this.newAnchor = prepared.newAnchor();
-            this.userEmbedding = prepared.userEmbedding();
-            this.userId = userId;
-            this.prompt = prompt;
-        }
-
-        /** doOnNext：累积 assistant 全文（只收 content 事件）。 */
-        void collectContent(ChatEvent event) {
-            if ("content".equals(event.type())) assistant.append(event.data());
-        }
-
-        boolean hasContent() {
-            return assistant.length() > 0;
-        }
-
-        String assistantText() {
-            return assistant.toString();
-        }
-
-        /** 末尾情绪 → 写 anchor.last_mood。 */
-        @Nullable String lastMood() {
-            return inlineMoods.isEmpty() ? null : inlineMoods.get(inlineMoods.size() - 1);
-        }
-
-        /** 逗号连接的完整轨迹 → 写 cold_memory.mood。 */
-        @Nullable String moodTrail() {
-            return inlineMoods.isEmpty() ? null : String.join(",", inlineMoods);
-        }
     }
 }

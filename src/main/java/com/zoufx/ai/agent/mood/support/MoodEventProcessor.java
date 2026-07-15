@@ -30,6 +30,9 @@ public class MoodEventProcessor {
     private static final char OPEN = '⟦';   // ⟦
     private static final char CLOSE = '⟧';  // ⟧
 
+    /** 整轮零 mood 时的兜底词——与 prompt「拿不准→愉快」默认规则对齐（须是 {@link Moods} 合法词）。 */
+    private static final String FALLBACK_MOOD = "愉快";
+
     /** 匹配 ⟦任意非⟧字符⟧。 */
     private static final Pattern TAG = Pattern.compile(OPEN + "([^" + CLOSE + "]*)" + CLOSE);
     /** 标记内部须形如 mood:KEYWORD。 */
@@ -54,19 +57,25 @@ public class MoodEventProcessor {
         flushSafePrefix();
     }
 
-    /** 流末兜底：再扫一次 + flush 剩余；未闭合的 {@code ⟦} 尾部丢弃（畸形零泄漏）。 */
+    /**
+     * 流末兜底：再扫一次 + flush 剩余；未闭合的 {@code ⟦} 尾部丢弃（畸形零泄漏）。
+     * 收尾时若整轮一个合法 mood 都没打（「开头必打」是格式纪律型指令，实测约三成轮次被 LLM 忽略），
+     * 补发一个默认「愉快」——保证每轮至少一次变脸，小Z 灵动的基线不塌。见 /test-prompt TP-31。
+     */
     public void flush() {
         scanAndStrip();
         int open = buffer.indexOf(String.valueOf(OPEN));
         if (open >= 0) {
             if (open > 0) sink.next(new ChatEvent("content", buffer.substring(0, open)));
             log.info("Dropped unclosed mood sentinel tail [userId={}]", userId);
-            buffer.setLength(0);
-            return;
-        }
-        if (buffer.length() > 0) {
+        } else if (buffer.length() > 0) {
             sink.next(new ChatEvent("content", buffer.toString()));
-            buffer.setLength(0);
+        }
+        buffer.setLength(0);
+        if (moods.isEmpty()) {
+            sink.next(new ChatEvent("mood", moodPayload(FALLBACK_MOOD)));
+            moods.add(FALLBACK_MOOD);
+            log.info("No mood emitted this turn, injected fallback [userId={}] mood={}", userId, FALLBACK_MOOD);
         }
     }
 

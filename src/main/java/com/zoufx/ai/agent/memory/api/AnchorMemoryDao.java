@@ -36,6 +36,18 @@ public interface AnchorMemoryDao {
     @Nullable Long snapshotActiveAt(String anchorId);
 
     /**
+     * 同步读取锚点现有摘要——供增量压缩把「旧摘要 + 新对话」一起喂给 LLM 产出更新后的摘要。
+     * anchorId 不存在或从未压缩过返回 null。
+     */
+    @Nullable String loadSummary(String anchorId);
+
+    /**
+     * 找出需要压缩的锚点 id：{@code last_active_at < idleBefore}（空闲超阈值）且自上次摘要后有新内容
+     * （{@code summarized_at IS NULL 或 < last_active_at}）。供定时压缩扫描器用。
+     */
+    List<String> findAnchorsNeedingCompaction(long idleBefore);
+
+    /**
      * 同步创建锚点——内部生成 UUID 并返回。同步签名，调用方在 boundedElastic 上。
      */
     String create(String userId);
@@ -46,18 +58,25 @@ public interface AnchorMemoryDao {
     Mono<List<AnchorMemory>> listByUserAsync(String userId);
 
     /**
-     * 标记锚点为活跃——更新 last_active_at = now，同时把 summary 置 NULL（回访场景，旧摘要作废），
-     * 并把本轮 AI 最后一次 mood 写入 last_mood（COALESCE 语义：null 不覆盖旧值，保留"上次的情绪"）。
+     * 标记锚点为活跃——更新 last_active_at = now，把本轮 AI 最后一次 mood 写入 last_mood
+     * （COALESCE 语义：null 不覆盖旧值，保留"上次的情绪"）。
+     * summary 是滚动摘要、由定时压缩维护，touch **不动它**（last_active_at 推进后自然让 summarized_at 落后 → 下次扫描重压）。
      * 由 {@code ChatService.persistTurn} 在事务内同步调用。
      */
     void touch(String anchorId, @Nullable String lastMood);
 
     /**
-     * CAS 写入压缩摘要——仅当 last_active_at 与快照值一致时才写入。
-     * 若 touch 在压缩期间推进了时间戳，CAS 不匹配 → 静默丢弃过时摘要，summary 维持 NULL（活跃状态）。
+     * CAS 写入压缩摘要 + 推进水位 summarized_at——仅当 last_active_at 与快照一致时才写。
+     * 若 touch 在压缩期间推进了 last_active_at，CAS 不匹配 → 静默丢弃这次结果，新内容留待下次扫描重压。
      * 由 {@link com.zoufx.ai.agent.chat.service.AnchorService#compress} 的同步流水线调用。
      */
     void updateSummaryIfUnchanged(String anchorId, String summary, long snapshotAt);
+
+    /**
+     * 仅推进水位 summarized_at（不动 summary）——供压缩时发现无可摘要内容（转录为空）时标记「已处理到此」，
+     * 避免空锚点被扫描反复挑中。同样 CAS on last_active_at。
+     */
+    void bumpSummarizedAt(String anchorId, long snapshotAt);
 
     /**
      * 仅当 title 为 null / 空白时填入——避免覆盖用户手动改过的标题。

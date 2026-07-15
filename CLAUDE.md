@@ -11,10 +11,13 @@ Hot Memory 含三种 type：`user-impression`（用户画像，UPSERT）/ `signi
 ## 架构
 
 **后端：** Spring WebFlux + Reactor Netty。HTTP 入口集中在 `ChatController`：
-- `POST /ai/chat`（SSE）—— 流式聊天，事件类型 `anchor_created` / `thinking` / `content` / `tool_call` / `tool_result` / `mood` / `error`；请求携带 `thinking` 布尔开关，true 走思考档、false 走快档；`anchorId` 为空时懒创建锚点（`anchor_created` 作首条事件）。请求可带 `regenerate`（布尔，可选）：`true` = 重试同一轮——**须回滚该 anchor 最后一轮 assistant 输出（ChatMemory 末尾 assistant 消息及其 reasoning/tool 轮）后就地再生成，不得把 prompt 当新 user 轮追加**，否则记忆窗口会出现重复提问。前端只对「最后一条」出错消息开放重试，故"回滚最后一轮"无歧义；缺省/`false` 即普通新轮。**待实现**
+- `POST /ai/chat`（SSE）—— 流式聊天，事件类型 `turn_started`（首帧带 turnId）/ `anchor_created` / `thinking` / `content` / `tool_call` / `tool_result` / `mood` / `error`；请求携带 `thinking` 布尔开关，true 走思考档、false 走快档；`anchorId` 为空时懒创建锚点（`turn_started` 作首帧、`anchor_created` 次之）。**consumeStream（生成脱离连接）**：生成挂后端自持订阅、客户端 SSE 只是 `Sinks.replay().all()` 视图——关页/断网/刷新只取消视图，后端跑完仍落库（用户回来轮询到完整回复）。失败不再原地重试，前端改「回填输入框」。
+- `POST /ai/chat/stop`（`{turnId}` → `{stopped}`）—— 主动停止一轮。断连≠停止，停止必须独立端点（另一个 HTTP 请求，到不了正在生成的那个请求）；`stopped:false` = 该轮已完成落库/已停，前端保留不删。
 - `GET /ai/features` —— 当前 profile 标识（预留扩展点，前端暂不消费）
-- `GET /ai/anchors?userId=X` / `GET /ai/anchors/{id}/messages` / `GET /ai/anchors/{id}/context` / `PATCH /ai/anchors/{id}/title` —— 锚点列表 / 窗口消息 / 三层衰减视图 / 重命名
+- `GET /ai/anchors?userId=X` / `GET /ai/anchors/{id}/messages` / `GET /ai/anchors/{id}/pending` / `GET /ai/anchors/{id}/context` / `PATCH /ai/anchors/{id}/title` —— 锚点列表 / 窗口消息 / 在建轮问题（consumeStream 轮询用）/ 三层衰减视图 / 重命名
 - `GET /ai/memory/hot?userId=X&type=Y` —— Hot Memory snapshot
+
+**锚点滚动摘要（定时压缩）：** `AnchorCompactionScheduler` 每 10min 扫描——挑「空闲超 `ai.anchor.compact-idle`（默认 1h）且自上次摘要后有新内容（`summarized_at < last_active_at`）」的锚点，做**增量压缩**（旧摘要 + 最近对话 → 更新后的摘要，覆盖 `anchor.summary` + 推进 `summarized_at`）。不再靠前端传 prevAnchorId、不再「切走即压」。摘要经 `AnchorPromptImpl` 作「其他对话的记忆」注入。
 
 配置见 `application.yml`。
 
@@ -70,10 +73,21 @@ Hot Memory 含三种 type：`user-impression`（用户画像，UPSERT）/ `signi
 - yml 配置同理——大段 prompt 文案默认值进 Java `@ConfigurationProperties` 字段初始化，yml 只留阈值/开关/环境变量
 - yml 与 `@ConfigurationProperties` 必须保持一一对应：yml 删掉的字段，Props 类里同步删掉，常量内联到调用处；不在 yml 里出现的值不应出现在 Props 类里
 
+## 代码质量与迭代
+
+写新代码、改旧代码都适用；这几条针对迭代项目最容易滋生的别扭代码：
+
+- **改功能时回看相邻/上游代码**：新功能常让某段旧写法过时——参数变得可从已有状态推导、触发时机可前移、DTO 变冗余。发现了要么一并改对，要么明确列出来给用户，别放着烂（迭代腐化的主因）。
+- **设计有异味先解决根因，不用变通拖债**：类放错包、参数多余、抽象名不副实这类，一个错误归属会连锁生更多别扭代码（内部成员被迫 public、循环依赖、参数透传只为喂一个判断）。先把归属/职责摆正再往下写，不要用「先放这、以后再说」把债往后拖。
+- **抽函数 / 加结构 ≠ 优雅**：只有真正降低阅读成本才抽；2~3 行的纯委托小方法多是负优化。动手前先问「这样读起来更清楚吗」，答案不明确就不抽。
+- **跨层 / 跨仓库改动先想清终态**：改事件名/契约、挪包、删类这类波及面大的改动，先把最终形态和影响范围想全再动，避免零敲碎打、来回打补丁。
+- **加字段 / 参数先问必要性**：它是否必要？能否从已有状态推导（如 `anchor_memory.last_active_at` 已能定位上一锚点，就不必让前端传 `prevAnchorId`）？能推导的就不新增。
+
 ## 工作原则
 
 - 目标不清晰时停下来讨论，不做假设
 - 临时文件按需清理，用户主动要求时执行
 - 新功能完成后执行 `/test` 自测
+- 测试需要起服务时（Docker/Qdrant、后端 `mvn spring-boot:run`、前端 `pnpm dev`），直接启动，无需申请——即便后端会真实调用 LLM 烧 token
 - 版本号变更时，`pom.xml` 的 `<version>` 必须同步更新（格式 `major.minor.patch-SNAPSHOT`，如 v0.12 → `0.12.0-SNAPSHOT`）
 - `git commit` / `git push` / 创建 PR 等写操作绝不主动执行，等用户明确发命令再做（只读命令如 `git status` / `git diff` 不受限）

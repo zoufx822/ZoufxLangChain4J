@@ -20,9 +20,10 @@ import java.util.List;
  *
  * <p>schema：
  * <pre>
- *   anchor_memory(id PK, user_id, title, summary, created_at, last_active_at)
+ *   anchor_memory(id PK, user_id, title, summary, last_mood, created_at, last_active_at, summarized_at)
  *   INDEX (user_id, last_active_at DESC)
  * </pre>
+ * {@code summarized_at} 是滚动摘要的水位：summary 覆盖到的 last_active_at；小于当前 last_active_at 即有新内容待压。
  *
  * <p>同步读 / 反应式写——见 {@link AnchorMemoryDao} 接口文档。
  */
@@ -44,11 +45,22 @@ public class AnchorMemoryDaoImpl implements AnchorMemoryDao {
                     summary        TEXT,
                     last_mood      TEXT,
                     created_at     INTEGER NOT NULL,
-                    last_active_at INTEGER NOT NULL
+                    last_active_at INTEGER NOT NULL,
+                    summarized_at  INTEGER
                 )
                 """);
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_anchor_memory_user_active ON anchor_memory(user_id, last_active_at DESC)");
+        // 存量表迁移：补 summarized_at 水位列（SQLite 无 ADD COLUMN IF NOT EXISTS，先探列再加）
+        if (!columnExists("anchor_memory", "summarized_at")) {
+            jdbc.execute("ALTER TABLE anchor_memory ADD COLUMN summarized_at INTEGER");
+            log.info("Migrated anchor_memory: added summarized_at column");
+        }
         log.info("AnchorMemoryDaoImpl schema ready (anchor_memory)");
+    }
+
+    private boolean columnExists(String table, String column) {
+        return jdbc.queryForList("PRAGMA table_info(" + table + ")").stream()
+                .anyMatch(row -> column.equals(row.get("name")));
     }
 
     // ====== 同步读 ======
@@ -75,6 +87,27 @@ public class AnchorMemoryDaoImpl implements AnchorMemoryDao {
         } catch (EmptyResultDataAccessException e) {
             return null;
         }
+    }
+
+    @Override
+    @Nullable
+    public String loadSummary(String anchorId) {
+        try {
+            return jdbc.queryForObject(
+                    "SELECT summary FROM anchor_memory WHERE id = ?",
+                    String.class, anchorId);
+        } catch (EmptyResultDataAccessException e) {
+            return null;
+        }
+    }
+
+    @Override
+    public List<String> findAnchorsNeedingCompaction(long idleBefore) {
+        return jdbc.queryForList("""
+                SELECT id FROM anchor_memory
+                WHERE last_active_at < ?
+                  AND (summarized_at IS NULL OR summarized_at < last_active_at)
+                """, String.class, idleBefore);
     }
 
     @Override
@@ -126,11 +159,17 @@ public class AnchorMemoryDaoImpl implements AnchorMemoryDao {
     @Override
     public void updateSummaryIfUnchanged(String anchorId, String summary, long snapshotAt) {
         int rows = jdbc.update(
-                "UPDATE anchor_memory SET summary = ? WHERE id = ? AND last_active_at = ?",
-                summary, anchorId, snapshotAt);
+                "UPDATE anchor_memory SET summary = ?, summarized_at = ? WHERE id = ? AND last_active_at = ?",
+                summary, snapshotAt, anchorId, snapshotAt);
         if (rows == 0) {
             log.info("Summary CAS skipped [anchorId={}]: anchor was touched during compression", anchorId);
         }
+    }
+
+    @Override
+    public void bumpSummarizedAt(String anchorId, long snapshotAt) {
+        jdbc.update("UPDATE anchor_memory SET summarized_at = ? WHERE id = ? AND last_active_at = ?",
+                snapshotAt, anchorId, snapshotAt);
     }
 
     @Override
@@ -149,9 +188,9 @@ public class AnchorMemoryDaoImpl implements AnchorMemoryDao {
 
     @Override
     public void touch(String anchorId, @Nullable String lastMood) {
-        // 回访锚点：last_active_at 推到 now + summary 置 NULL（旧摘要作废，下次切走再压）
+        // last_active_at 推到 now；summary 是滚动摘要不动它（last_active_at 推进后 summarized_at 落后 → 下次扫描重压）
         // last_mood 走 COALESCE：本轮无 mood 事件时保留旧值，不被 null 覆盖
-        jdbc.update("UPDATE anchor_memory SET last_active_at = ?, summary = NULL, last_mood = COALESCE(?, last_mood) WHERE id = ?",
+        jdbc.update("UPDATE anchor_memory SET last_active_at = ?, last_mood = COALESCE(?, last_mood) WHERE id = ?",
                 System.currentTimeMillis(), lastMood, anchorId);
     }
 
