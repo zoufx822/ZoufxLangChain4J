@@ -131,6 +131,10 @@ public class ChatService {
      * <p>懒建锚点（anchorId 为空则新建）+ {@code chatMemoryService.seed}（committed 灌进 pending）在 try 外——
      * 硬错误，直接传播；embed / 召回 / PromptContext 构建失败吞掉（辅助能力，不阻断对话，userEmbedding 留空）。
      * 上一锚点的压缩不在此触发——改由 {@link com.zoufx.ai.agent.chat.support.ChatScheduler} 定时按空闲检测。
+     *
+     * <p>{@code turnRegistry.register} 紧跟锚点解析之后、embed/召回（慢网络调用）之前——锚点创建
+     * 落库即刻可被 {@code GET /ai/anchors} 查到，若注册表登记晚于这些慢调用，会出现"锚点已存在但
+     * pending 查不到在建轮"的窗口（实测约 100~200ms，足够被一次页面刷新撞上）。
      */
     private Turn prepare(String userId, @Nullable String anchorId, String prompt) {
         Turn turn = Turn.builder()
@@ -139,13 +143,14 @@ public class ChatService {
                 .newAnchor(anchorId == null)
                 .anchorId(Optional.ofNullable(anchorId).orElseGet(() -> anchorMemoryDao.create(userId)))
                 .build();
-                
+
         chatMemoryService.seed(turn.anchorId);
+        turnRegistry.register(turn);
 
         try {
             // prompt 向量化：召回 query + persistTurn 索引 cold user 行复用同一份，避免重复嵌入
             Embedding emb = embeddingModel.embed(prompt).content();
-            turn = turn.toBuilder().userEmbedding(emb).build();
+            turn.userEmbedding = emb;
             // 借 chat window 大小在 cold_memory（跨锚点全量）近似出一个时间下界：
             // 同一轮消息会同时落 chat_memory（发给 LLM 的原文）和 cold_memory（可召回索引），不排除的话，
             // 刚发生的对话会被召回换个格式重复塞进 system prompt，让 LLM 把"刚说的话"误当成"想起的旧记忆"。
@@ -175,8 +180,7 @@ public class ChatService {
         sink.tryEmitNext(new ChatEvent("turn_started", turn.turnId));
         if (turn.newAnchor) sink.tryEmitNext(new ChatEvent("anchor_created", turn.anchorId));
 
-        // 后端自持订阅：驱动生成、把事件转进 sink，并开一轮登记（供停止/轮询定位）——与客户端在不在无关
-        turnRegistry.register(turn);
+        // 后端自持订阅：驱动生成、把事件转进 sink——与客户端在不在无关（turn 已在 prepare 阶段登记注册表）
         turn.setBackendSub(buildGenerationFlux(thinking, turn).subscribe(
                 sink::tryEmitNext,
                 err -> {   // 出错：记日志 + 传给 sink（doOnComplete 不触发→不落库）

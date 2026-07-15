@@ -31,8 +31,9 @@ public final class Turn implements TurnHandle {
     public final String anchorId;
     public final String userId;
     public final String prompt;
-    @Nullable @Builder.Default
-    public final Embedding userEmbedding = null;
+    /** prepare 阶段 embed 完成后直接赋值（非 builder 字段——注册表在 embed 之前就已登记本 turn，
+     *  toBuilder 重建会产生游离新实例，脱离已登记的引用）。 */
+    public volatile @Nullable Embedding userEmbedding;
     public final boolean newAnchor;
 
     /** 重试守门：收到首个 token 后置位，禁止再重试（已发出的内容无法回滚）。 */
