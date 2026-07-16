@@ -46,30 +46,36 @@ public class DeepSeekV4Config {
 
     private final DeepSeekV4Props props;
 
-    /** normal 档的约定值：端口识别它=不下发 reasoning_effort（不是把字符串发给 LLM）。 */
+    /**
+     * 前端档位值。DeepSeek API 可传 5 值（low/medium/high/max/xhigh）但实测行为仅两档：
+     * 非 max 全等价（官方档名 high，含不传）；max/xhigh 等价（服务端注入增强思考指令）。
+     * 故前端只设两档，映射见 {@link #apiEffort}。
+     */
     private static final String EFFORT_NORMAL = "normal";
+    private static final String EFFORT_MAX = "max";
     /** 前端默认选档（thinking 开启但未指定时也回落到它）。 */
     private static final String EFFORT_DEFAULT = EFFORT_NORMAL;
-    /** 固定三档（value=API 值，label=前端文案）。normal=不带 effort；high/max 才透传给 LLM。 */
+    /** 两档（value=前端档位值，label=前端文案）。 */
     private static final List<Features.EffortOption> EFFORT_OPTIONS = List.of(
-            new Features.EffortOption("normal", "标准"),
-            new Features.EffortOption("high", "深度"),
-            new Features.EffortOption("max", "极致"));
+            new Features.EffortOption(EFFORT_NORMAL, "标准"),
+            new Features.EffortOption(EFFORT_MAX, "极致"));
 
     /** DeepSeek 私有 thinking 字段，序列化为请求体根级 {@code "thinking": {"type": ...}}。 */
     private static Map<String, Object> thinkingParam(String type) {
         return Map.of("thinking", Map.of("type", type));
     }
 
-    /** 流式对话模型：默认指向快档模型，思考/快档差异由 per-call 参数覆盖（见 streamingChatPort）。 */
+    /**
+     * 流式对话模型：故意不设默认 modelName——模型名恒由 per-call 参数指定（见 streamingChatPort）。
+     * 绕过端口直调且未传 modelName 时，请求体缺 model 字段会被 API 拒绝，fail-fast。
+     */
     @Bean
     public StreamingChatModel streamingChatModel() {
-        String model = props.getChat().getFastModel();
-        log.info("Creating streamingChatModel [deepseek-v4] defaultModel={} (per-call 覆盖 thinking/快档)", model);
+        log.info("Creating streamingChatModel [deepseek-v4] (modelName 由 per-call 指定: thinking={} / fast={})",
+                props.getChat().getThinkingModel(), props.getChat().getFastModel());
         return OpenAiStreamingChatModel.builder()
                 .apiKey(props.getApiKey())
                 .baseUrl(props.getBaseUrl())
-                .modelName(model)
                 .maxTokens(props.getChat().getMaxTokens())
                 .timeout(props.getTimeout())
                 .returnThinking(true)
@@ -94,13 +100,16 @@ public class DeepSeekV4Config {
                     .customParameters(thinkingParam("disabled"))
                     .build();
         }
-        var builder = OpenAiChatRequestParameters.builder()
+        return OpenAiChatRequestParameters.builder()
                 .modelName(props.getChat().getThinkingModel())
-                .customParameters(thinkingParam("enabled"));
-        String eff = resolveEffort(thinking.effort());
-        // normal 档 = 不带 reasoning_effort 字段（DeepSeek 默认行为，最省）；high/max 才显式下发
-        if (!EFFORT_NORMAL.equals(eff)) builder.reasoningEffort(eff);
-        return builder.build();
+                .customParameters(thinkingParam("enabled"))
+                .reasoningEffort(apiEffort(resolveEffort(thinking.effort())))
+                .build();
+    }
+
+    /** 前端档位 → API 值：normal→high（官方默认档，显式钉死防上游默认漂移），max→max。 */
+    private static String apiEffort(String effort) {
+        return EFFORT_NORMAL.equals(effort) ? "high" : EFFORT_MAX;
     }
 
     /** 校验 effort 是否在支持档位内；非法/为空回落默认档。 */

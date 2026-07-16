@@ -75,12 +75,9 @@ ai:
       version: 2023-06-01
       timeout: 60s
       chat:
-        # M3 无快慢模型分层，两档同模型靠 thinking 参数区分；上游放出快速变体后改 fast-model
-        thinking-model: MiniMax-M3
-        fast-model: MiniMax-M3
+        # M3 无快慢模型分层，思考/快档靠 thinking 参数区分
+        model: MiniMax-M3
         max-tokens: 16384
-      thinking:
-        budget-tokens: 8192
 
   tools:
     web-search:

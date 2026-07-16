@@ -2,7 +2,7 @@
 
 ## 项目
 
-Spring Boot 4.0.6 + LangChain4J 1.13.1，支持 `deepseek-v4` / `MiniMax-M3` 双 LLM profile 切换：DeepSeek 走 OpenAI 兼容协议，MiniMax 走 Anthropic 兼容协议。带会话记忆的流式聊天与思考模式。
+Spring Boot 4.1.0 + LangChain4J 1.17.2，支持 `deepseek-v4` / `MiniMax-M3` 双 LLM profile 切换：DeepSeek 走 OpenAI 兼容协议，MiniMax 走 Anthropic 兼容协议。带会话记忆的流式聊天与思考模式。
 
 Hot Memory 含三种 type：`user-impression`（用户画像，UPSERT）/ `significant-event`（重要经历，append-only）/ `commitment`（双方承诺，append-only）。情绪谱 7 词：平静 / 愉快 / 兴奋 / 难过 / 愤怒 / 好奇 / 困惑。
 
@@ -33,15 +33,17 @@ Hot Memory 含三种 type：`user-impression`（用户画像，UPSERT）/ `signi
 
 | 角色 Bean | 用途 | deepseek-v4 | MiniMax-M3 |
 |---|---|---|---|
-| `streamingChatModel`（流式） | 对话主路 | 1 个，思考/快档由 per-call 参数切（pro+max+enabled / flash+disabled） | 端口内建 2 个，adaptive / disabled |
-| `syncChatModel`（同步） | 情绪分类 + 摘要压缩 | flash + thinking disabled | disabled |
+| `streamingChatModel`（流式） | 对话主路 | 1 个，思考/快档由 per-call 参数切（pro+enabled+effort / flash+disabled） | 1 个，modelName 固定，思考/快档只切 per-call thinkingType（adaptive / disabled） |
+| `syncChatModel`（同步） | 情绪分类 + 摘要压缩 | flash + thinking disabled | model + thinking disabled |
 
-每档模型 ID 由 `ai.llm.<profile>.chat.thinking-model / fast-model` 配置（MiniMax M3 两档同模型同值，靠 thinking 参数区分）。
+DeepSeek 两档模型 ID 由 `ai.llm.deepseek-v4.chat.thinking-model / fast-model` 配置（pro/flash 是真实不同的模型）；
+MiniMax 无模型分层，单一 `ai.llm.minimax-m3.chat.model` 配置（M3 官方另有 `M3-highspeed` 变体，
+是否支持 thinking 待验证后再评估是否引入分层）。
 
-**前端思考开关 → 后端路由：** ChatService 只依赖 `StreamingChatPort.stream(anchorId, prompt, thinking)`，profile 间的 per-call 能力差异被端口屏蔽。`AssistantFactory`（`chat/support`）从一个 `StreamingChatModel` 装一个 `ChatAssistant`（共享 ChatMemoryProvider + 动态 system prompt + 工具集），profile-agnostic 部分集中于此。两 profile 的端口实现各自调它：
+**前端思考开关 → 后端路由：** ChatService 只依赖 `StreamingChatPort.stream(anchorId, prompt, thinking)`，profile 间的 per-call 能力差异被端口屏蔽。`AssistantFactory`（`chat/support`）从一个 `StreamingChatModel` 装一个 `ChatAssistant`（共享 ChatMemoryProvider + 动态 system prompt + 工具集），profile-agnostic 部分集中于此。两 profile 均为单模型 + 单 assistant，per-call 参数由各自端口现场拼装：
 
-- **DeepSeek（OpenAI 协议）**：OpenAI 支持 per-call `OpenAiChatRequestParameters`，故只装 1 个 `streamingChatModel` + 1 个 assistant；思考/快档差异（模型名 + reasoning_effort + `thinking` 私有字段经 `customParameters`）由端口按请求现场拼参数覆盖。
-- **MiniMax（Anthropic 协议）**：LC4J 1.13.1 的 Anthropic 无 per-call 参数载体（无 `AnthropicChatRequestParameters`，thinking 只能 builder 期定），故端口内建思考/快档两个模型 + 两个 assistant，按 thinking 选其一、per-call 参数传 EMPTY。
+- **DeepSeek（OpenAI 协议）**：`OpenAiChatRequestParameters` 覆盖 modelName + `reasoningEffort` + `thinking` 私有字段（经 `customParameters` 注入请求体根级）。effort 前端两档（标准/极致），映射到 API 值 high/max（实测 low/medium/high 行为等价，故不设中间档）。
+- **MiniMax（Anthropic 协议，LC4J 1.17+）**：`AnthropicChatRequestParameters` 原生覆盖 `thinkingType` + `thinkingBudgetTokens`；effort 对 Anthropic 协议无业务分档需求，`Features` 声明 unsupported。
 
 > 注意：所有模型 Bean 统一开 `returnThinking + sendThinking`——思考/快档共享会话记忆，上一轮思考档产出的 reasoning/thinking 内容必须在后续轮次（即使走快档）原样回传，否则 DeepSeek API 拒绝、MiniMax 工具调用行为异常。
 
