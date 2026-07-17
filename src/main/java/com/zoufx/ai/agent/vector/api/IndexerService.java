@@ -24,12 +24,13 @@ public interface IndexerService {
      * @param sourceId 来源主键：cold_memory.id（字符串化）/ hot_memory key（UUID）/ impression 字段名
      * @param content  记忆文本（仅用于算 importance，不写进 payload）
      * @param role     cold 的 'user' / 'assistant'；hot 类传 null
+     * @param username 已知称呼，供评分「提及称呼」加分；调用方按自己场景取（不便获取传 null）
      */
     void index(String userId, String memType, String sourceId, String content,
-               @Nullable String role, long createdAt, Embedding embedding);
+               @Nullable String role, long createdAt, Embedding embedding, @Nullable String username);
 
     Mono<Void> indexAsync(String userId, String memType, String sourceId, String content,
-                          @Nullable String role, long createdAt, Embedding embedding);
+                          @Nullable String role, long createdAt, Embedding embedding, @Nullable String username);
 
     /**
      * 嵌入 + 异步索引——embed 放在 boundedElastic 上跑，不阻塞调用线程（@Tool / event loop 均安全）。
@@ -40,5 +41,5 @@ public interface IndexerService {
      * @param text     原始文本（用于 embed + importance）
      */
     Mono<Void> indexTextAsync(String userId, String memType, String sourceId, String text,
-                              @Nullable String role, long createdAt);
+                              @Nullable String role, long createdAt, @Nullable String username);
 }

@@ -24,11 +24,10 @@ public interface ColdMemoryDao {
     /**
      * 追加一条经历流记录，返回新行自增 id。
      *
-     * @param role         'user' / 'assistant'
-     * @param metadataJson JSON 字符串，当前留空
-     * @param mood         情绪关键词，仅 assistant 消息有值；user 消息传 null
+     * @param role 'user' / 'assistant'
+     * @param mood 情绪关键词，仅 assistant 消息有值；user 消息传 null
      */
-    long append(String userId, String role, String content, @Nullable String metadataJson, @Nullable String mood);
+    long append(String userId, String role, String content, @Nullable String mood);
 
     /**
      * 按 id 批量取原文——召回 hydration 用（Qdrant 只存指针，正文回这里取）。

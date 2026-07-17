@@ -68,8 +68,8 @@ public class AnchorService {
      * 标记锚点为活跃——同步本体，供 {@code ChatService.persistTurn} 事务内同步调用。
      * 无反应式调用方，不加 xxxAsync 壳。
      */
-    public void touch(String anchorId, @Nullable String lastMood) {
-        anchorMemoryDao.touch(anchorId, lastMood);
+    public void touch(String anchorId, @Nullable String moodTrail) {
+        anchorMemoryDao.touch(anchorId, moodTrail);
     }
 
     /**

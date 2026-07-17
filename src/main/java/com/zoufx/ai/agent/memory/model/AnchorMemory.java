@@ -11,9 +11,9 @@ import org.jspecify.annotations.Nullable;
  * <p>{@code title} 创建时可为 null，{@code ChatService.persistTurn} 用首条 user 消息
  * 截取自动 backfill；前端 PATCH /ai/anchors/{anchorId}/title 也可无条件覆盖。
  *
- * <p>{@code lastMood} 是本锚点最近一轮 AI 回复结束时的情绪关键词（参见 {@code Moods.ALL}）；
- * {@code ChatService.persistTurn} 从 {@code MoodEventProcessor} 取最后一次 mood 写入。
- * 无 mood 事件本轮维持旧值（COALESCE 语义），让前端"AI 还记得上次跟你聊时的情绪"。
+ * <p>{@code lastMood} 是本锚点最近一轮 AI 回复结束时的情绪关键词（参见 {@code Moods.ALL}）——
+ * DB 层 {@code anchor_memory.mood} 存的是本轮完整情绪轨迹（逗号连接），本字段只取轨迹末尾一个词，
+ * JSON 契约保持不变。无 mood 事件本轮维持旧轨迹（COALESCE 语义），让前端"AI 还记得上次跟你聊时的情绪"。
  */
 public record AnchorMemory(
         String id,

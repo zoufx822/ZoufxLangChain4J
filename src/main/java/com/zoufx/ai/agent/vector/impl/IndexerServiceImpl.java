@@ -1,7 +1,5 @@
 package com.zoufx.ai.agent.vector.impl;
 
-import com.zoufx.ai.agent.memory.api.HotMemoryDao;
-import com.zoufx.ai.agent.memory.support.HotMemoryType;
 import com.zoufx.ai.agent.vector.api.ScorerService;
 import com.zoufx.ai.agent.vector.api.IndexerService;
 import com.zoufx.ai.agent.vector.support.VectorPayload;
@@ -36,14 +34,12 @@ public class IndexerServiceImpl implements IndexerService {
 
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final ScorerService scorer;
-    private final HotMemoryDao hotMemoryDao;
     private final EmbeddingModel embeddingModel;
 
     @Override
     public void index(String userId, String memType, String sourceId, String content,
-                      @Nullable String role, long createdAt, Embedding embedding) {
+                      @Nullable String role, long createdAt, Embedding embedding, @Nullable String username) {
         try {
-            String username = hotMemoryDao.snapshot(userId, HotMemoryType.USER_IMPRESSION).get("username");
             double importance = scorer.score(memType, role, content, username);
             Metadata md = new Metadata();
             md.put(VectorPayload.USER_ID, userId);
@@ -65,13 +61,13 @@ public class IndexerServiceImpl implements IndexerService {
 
     @Override
     public Mono<Void> indexAsync(String userId, String memType, String sourceId, String content,
-                                 @Nullable String role, long createdAt, Embedding embedding) {
-        return Blocking.run(() -> index(userId, memType, sourceId, content, role, createdAt, embedding));
+                                 @Nullable String role, long createdAt, Embedding embedding, @Nullable String username) {
+        return Blocking.run(() -> index(userId, memType, sourceId, content, role, createdAt, embedding, username));
     }
 
     @Override
     public Mono<Void> indexTextAsync(String userId, String memType, String sourceId, String text,
-                                     @Nullable String role, long createdAt) {
+                                     @Nullable String role, long createdAt, @Nullable String username) {
         return Blocking.run(() -> {
             Embedding emb;
             try {
@@ -80,7 +76,7 @@ public class IndexerServiceImpl implements IndexerService {
                 log.warn("Embed failed, skip vector index [memType={} sourceId={}]: {}", memType, sourceId, e.toString());
                 return;
             }
-            index(userId, memType, sourceId, text, role, createdAt, emb);
+            index(userId, memType, sourceId, text, role, createdAt, emb, username);
         });
     }
 

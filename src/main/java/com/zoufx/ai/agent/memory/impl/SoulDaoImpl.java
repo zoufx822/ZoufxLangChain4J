@@ -88,24 +88,18 @@ public class SoulDaoImpl implements SoulDao {
     }
 
     private void seedIfEmpty() {
-        Map<String, String> seed = DEFAULT_SEED;
-        if (seed == null || seed.isEmpty()) {
-            log.info("SoulDao seed empty, nothing to insert");
-            return;
-        }
         long now = System.currentTimeMillis();
         int inserted = 0;
-        for (Map.Entry<String, String> e : seed.entrySet()) {
-            if (e.getValue() == null || e.getValue().isBlank()) continue;
+        for (Map.Entry<String, String> e : DEFAULT_SEED.entrySet()) {
             int rows = jdbc.update(
                     "INSERT OR IGNORE INTO soul_profile (key, value, updated_at) VALUES (?, ?, ?)",
                     e.getKey(), e.getValue(), now);
             inserted += rows;
         }
         if (inserted > 0) {
-            log.info("SoulDao seeded with {} new keys ({} skipped)", inserted, seed.size() - inserted);
+            log.info("SoulDao seeded with {} new keys ({} skipped)", inserted, DEFAULT_SEED.size() - inserted);
         } else {
-            log.debug("SoulDao all {} seed keys already exist, nothing inserted", seed.size());
+            log.debug("SoulDao all {} seed keys already exist, nothing inserted", DEFAULT_SEED.size());
         }
     }
 

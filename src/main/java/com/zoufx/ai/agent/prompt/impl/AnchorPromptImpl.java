@@ -6,8 +6,6 @@ import com.zoufx.ai.agent.memory.model.AnchorMemory;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-
 /**
  * 「## 你与对方此前的其他交谈」段（order=28）——把同一用户的其他锚点摘要注入当前会话，
  * 让 AI 跨对话保有连续记忆。LLM 可见文案统一用"交谈"心智（记忆跨对话），
@@ -23,6 +21,11 @@ public class AnchorPromptImpl implements Prompt {
     /** 最多注入的其他锚点条数——按 last_active_at desc 取头部。 */
     private static final int INJECT_LIMIT = 5;
 
+    /** 空态文案：既无其他锚点、也无已压缩摘要时统一走此路径。 */
+    private static final String EMPTY_STATE = "## 你与对方此前的其他交谈\n\n"
+            + "暂无可参考的交谈摘要。对方提及过往时，以「此刻想起的相关记忆」和记忆检索的结果为准——"
+            + "**不要**凭空编造「我们之前聊过 X」或「你之前提到过 Y」。\n\n";
+
     @Override
     public int order() {
         return 28;
@@ -33,14 +36,9 @@ public class AnchorPromptImpl implements Prompt {
     public String render(@Nullable PromptContext ctx) {
         if (ctx == null || ctx.userId() == null) return null;
 
-        List<AnchorMemory> others = ctx.otherAnchors();
-        if (others.isEmpty()) {
-            return "## 你与对方此前的其他交谈\n\n暂无可参考的交谈摘要。对方提及过往时，以「此刻想起的相关记忆」和记忆检索的结果为准——**不要**凭空编造「我们之前聊过 X」或「你之前提到过 Y」。\n\n";
-        }
-
         StringBuilder sb = new StringBuilder();
         int rendered = 0;
-        for (AnchorMemory a : others) {
+        for (AnchorMemory a : ctx.otherAnchors()) {
             if (rendered >= INJECT_LIMIT) break;
             String summary = a.summary();
             if (summary == null || summary.isBlank()) continue;
@@ -52,9 +50,7 @@ public class AnchorPromptImpl implements Prompt {
             sb.append("- 「").append(title).append("」：").append(summary).append("\n");
             rendered++;
         }
-        if (rendered == 0) {
-            return "## 你与对方此前的其他交谈\n\n暂无可参考的交谈摘要。对方提及过往时，以「此刻想起的相关记忆」和记忆检索的结果为准——**不要**凭空编造「我们之前聊过 X」或「你之前提到过 Y」。\n\n";
-        }
+        if (rendered == 0) return EMPTY_STATE;
         sb.append("\n");
         return sb.toString();
     }

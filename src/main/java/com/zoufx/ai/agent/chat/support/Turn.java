@@ -34,6 +34,9 @@ public final class Turn implements TurnHandle {
     /** prepare 阶段 embed 完成后直接赋值（非 builder 字段——注册表在 embed 之前就已登记本 turn，
      *  toBuilder 重建会产生游离新实例，脱离已登记的引用）。 */
     public volatile @Nullable Embedding userEmbedding;
+    /** prepare 阶段从 hotImpressionSnap 取值直接赋值（同上，非 builder 字段）——供 indexAfterCommit
+     *  评分「提及称呼」加分，避免 IndexerService 每次索引都反查一次 hot_memory 全表。 */
+    public volatile @Nullable String username;
     public final boolean newAnchor;
 
     /** 重试守门：收到首个 token 后置位，禁止再重试（已发出的内容无法回滚）。 */
@@ -78,6 +81,11 @@ public final class Turn implements TurnHandle {
         return claimed.compareAndSet(false, true);
     }
 
+    /** 只读探测终局是否已被抢占，不参与 CAS 竞争——供首 token 回调判断 stop 是否已抢先。 */
+    public boolean isClaimed() {
+        return claimed.get();
+    }
+
     @Override
     public void abort() {
         StreamingHandle h = handle.get();
@@ -99,12 +107,7 @@ public final class Turn implements TurnHandle {
         return assistant.toString();
     }
 
-    /** 末尾情绪 → 写 anchor.last_mood。 */
-    public @Nullable String lastMood() {
-        return inlineMoods.isEmpty() ? null : inlineMoods.get(inlineMoods.size() - 1);
-    }
-
-    /** 逗号连接的完整轨迹 → 写 cold_memory.mood。 */
+    /** 逗号连接的完整轨迹 → 写 cold_memory.mood / anchor_memory.mood。 */
     public @Nullable String moodTrail() {
         return inlineMoods.isEmpty() ? null : String.join(",", inlineMoods);
     }

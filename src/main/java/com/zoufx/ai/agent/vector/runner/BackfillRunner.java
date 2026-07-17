@@ -14,6 +14,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -36,13 +38,15 @@ public class BackfillRunner implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         log.info("VectorBackfill START (this may take a while)");
+        Map<String, String> usernameByUser = loadUsernames();
+
         AtomicInteger cold = new AtomicInteger();
         jdbc.query("SELECT id, user_id, role, content, created_at FROM cold_memory ORDER BY id", rs -> {
             String userId = rs.getString("user_id");
             String role = rs.getString("role");
             String content = rs.getString("content");
             long createdAt = rs.getLong("created_at");
-            indexRow(userId, VectorPayload.COLD, String.valueOf(rs.getLong("id")), content, role, createdAt);
+            indexRow(userId, VectorPayload.COLD, String.valueOf(rs.getLong("id")), content, role, createdAt, usernameByUser.get(userId));
             cold.incrementAndGet();
         });
 
@@ -54,17 +58,26 @@ public class BackfillRunner implements ApplicationRunner {
             String value = rs.getString("value");
             long updatedAt = rs.getLong("updated_at");
             String embedText = embedTextFor(type, key, value);
-            indexRow(userId, type, key, embedText, null, updatedAt);
+            indexRow(userId, type, key, embedText, null, updatedAt, usernameByUser.get(userId));
             hot.incrementAndGet();
         });
 
         log.info("VectorBackfill DONE cold={} hot={}", cold.get(), hot.get());
     }
 
+    /** userId → username 查表——评分「提及称呼」加分用，保证与写入路径（ChatService.prepare）评分口径一致。 */
+    private Map<String, String> loadUsernames() {
+        Map<String, String> result = new HashMap<>();
+        jdbc.query("SELECT user_id, value FROM hot_memory WHERE type = ? AND key = 'username'",
+                rs -> { result.put(rs.getString("user_id"), rs.getString("value")); },
+                VectorPayload.USER_IMPRESSION);
+        return result;
+    }
+
     /** 单行 embed + 索引——失败仅记日志继续遍历，不让个别坏行中断 backfill / 应用启动。 */
-    private void indexRow(String userId, String type, String sourceId, String text, @Nullable String role, long ts) {
+    private void indexRow(String userId, String type, String sourceId, String text, @Nullable String role, long ts, @Nullable String username) {
         try {
-            indexer.index(userId, type, sourceId, text, role, ts, embeddingModel.embed(text).content());
+            indexer.index(userId, type, sourceId, text, role, ts, embeddingModel.embed(text).content(), username);
         } catch (Exception e) {
             log.warn("Backfill index failed [type={} sourceId={}]: {}", type, sourceId, e.toString());
         }

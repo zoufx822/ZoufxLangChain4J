@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -39,12 +40,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> onIllegalArgument(IllegalArgumentException ex) {
-        log.warn("Bad argument: {}", ex.getMessage());
+        String message = Objects.requireNonNullElse(ex.getMessage(), "参数错误");
+        log.warn("Bad argument: {}", message);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of(
                         "error", "VALIDATION_FAILED",
-                        "message", ex.getMessage(),
+                        "message", message,
                         "timestamp", Instant.now().toString()
                 ));
     }

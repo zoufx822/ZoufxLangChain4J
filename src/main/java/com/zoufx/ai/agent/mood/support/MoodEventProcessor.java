@@ -9,7 +9,6 @@ import reactor.core.publisher.FluxSink;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 有状态的情绪事件处理器——从 LLM content 流里剥离专用情绪标记 {@code ⟦mood:KEYWORD⟧}。
@@ -26,17 +25,8 @@ import java.util.regex.Pattern;
 @Slf4j
 public class MoodEventProcessor {
 
-    /** 专用情绪标记定界符。 */
-    private static final char OPEN = '⟦';   // ⟦
-    private static final char CLOSE = '⟧';  // ⟧
-
     /** 整轮零 mood 时的兜底词——与 prompt「拿不准→愉快」默认规则对齐（须是 {@link Moods} 合法词）。 */
     private static final String FALLBACK_MOOD = "愉快";
-
-    /** 匹配 ⟦任意非⟧字符⟧。 */
-    private static final Pattern TAG = Pattern.compile(OPEN + "([^" + CLOSE + "]*)" + CLOSE);
-    /** 标记内部须形如 mood:KEYWORD。 */
-    private static final Pattern INNER = Pattern.compile("^\\s*mood:\\s*(.+?)\\s*$");
 
     private final FluxSink<ChatEvent> sink;
     private final String userId;
@@ -64,7 +54,7 @@ public class MoodEventProcessor {
      */
     public void flush() {
         scanAndStrip();
-        int open = buffer.indexOf(String.valueOf(OPEN));
+        int open = buffer.indexOf(String.valueOf(MoodTags.OPEN));
         if (open >= 0) {
             if (open > 0) sink.next(new ChatEvent("content", buffer.substring(0, open)));
             log.info("Dropped unclosed mood sentinel tail [userId={}]", userId);
@@ -82,7 +72,7 @@ public class MoodEventProcessor {
     /** 剥离 buffer 内所有完整 {@code ⟦...⟧}：emit 命中前内容 + 删标记 + 校验内部发 mood 事件或静默丢弃。 */
     private void scanAndStrip() {
         while (true) {
-            Matcher t = TAG.matcher(buffer);
+            Matcher t = MoodTags.TAG.matcher(buffer);
             if (!t.find()) return;
             String before = buffer.substring(0, t.start());
             if (!before.isEmpty()) {
@@ -91,9 +81,8 @@ public class MoodEventProcessor {
             String inner = t.group(1);
             buffer.delete(0, t.end());
 
-            Matcher m = INNER.matcher(inner);
-            if (m.matches() && Moods.isValid(m.group(1).trim())) {
-                String mood = m.group(1).trim();
+            String mood = MoodTags.parseValid(inner);
+            if (mood != null) {
                 sink.next(new ChatEvent("mood", moodPayload(mood)));
                 moods.add(mood);
                 log.info("Mood stripped [userId={}] mood={}", userId, mood);
@@ -105,7 +94,7 @@ public class MoodEventProcessor {
 
     /** 流式途中：不 emit 越过未闭合的 {@code ⟦}（此时 buffer 里已无完整标记，任何 ⟦ 都是未闭合的）。 */
     private void flushSafePrefix() {
-        int open = buffer.indexOf(String.valueOf(OPEN));
+        int open = buffer.indexOf(String.valueOf(MoodTags.OPEN));
         int safeLen = (open >= 0) ? open : buffer.length();
         if (safeLen <= 0) return;
         sink.next(new ChatEvent("content", buffer.substring(0, safeLen)));

@@ -12,6 +12,7 @@ import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -76,7 +77,7 @@ public class HotMemoryDaoImpl implements HotMemoryDao {
     @Override
     public Map<String, String> fetchValues(String userId, String type, Collection<String> keys) {
         if (keys == null || keys.isEmpty()) return Map.of();
-        String placeholders = String.join(",", java.util.Collections.nCopies(keys.size(), "?"));
+        String placeholders = String.join(",", Collections.nCopies(keys.size(), "?"));
         List<Object> args = new ArrayList<>(keys.size() + 2);
         args.add(userId);
         args.add(type);

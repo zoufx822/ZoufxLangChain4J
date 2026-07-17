@@ -3,6 +3,7 @@ package com.zoufx.ai.agent.memory.impl;
 import com.zoufx.ai.agent.base.support.Blocking;
 import com.zoufx.ai.agent.memory.api.AnchorMemoryDao;
 import com.zoufx.ai.agent.memory.api.ChatMemoryDao;
+import com.zoufx.ai.agent.mood.support.MoodTags;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
@@ -20,7 +21,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
+import java.util.function.Consumer;
 
 /**
  * SQLite 实现——纯落库，只实现 {@link ChatMemoryDao}。业务缓存/LC4J ChatMemoryStore 契约
@@ -58,8 +59,9 @@ public class ChatMemoryDaoImpl implements ChatMemoryDao {
                     created_at  INTEGER NOT NULL
                 )
                 """);
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_chat_memory_user ON chat_memory(user_id)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_chat_memory_anchor ON chat_memory(anchor_id)");
+        // 存量库清理：user_id 列无按其查询场景，索引冗余（列本身保留作冗余兜底，见下方 INSERT 注释）
+        jdbc.execute("DROP INDEX IF EXISTS idx_chat_memory_user");
         log.info("ChatMemoryDaoImpl schema ready (chat_memory)");
     }
 
@@ -76,26 +78,18 @@ public class ChatMemoryDaoImpl implements ChatMemoryDao {
                 anchorId);
     }
 
-    /** 匹配 AiMessage text 里的专用情绪标记 ⟦mood:KEYWORD⟧，持久化前剥离到 mood 列。 */
-    private static final Pattern MOOD_TAG = Pattern.compile("⟦mood:([^⟧]+?)⟧");
-
     /**
-     * 从 AiMessage 文本末尾提取 mood 关键字，返回剥离后的干净消息。
-     * 非 AiMessage 或文本无 mood 标记时返回原消息 + mood=null。
+     * 从 AiMessage 文本提取完整 mood 轨迹（逗号连接，语义与 cold_memory.mood 对齐），返回剥离标记后的干净消息。
+     * 非 AiMessage、文本无标记、或标记均非法时轨迹为 null。
      */
-    private static ChatMessage stripMoodAndClean(ChatMessage msg, java.util.function.Consumer<String> moodSink) {
-        if (msg instanceof AiMessage a && a.text() != null) {
-            java.util.regex.Matcher m = MOOD_TAG.matcher(a.text());
-            if (m.find()) {
-                moodSink.accept(m.group(1).trim());
-                String clean = m.replaceAll("");
-                if (a.hasToolExecutionRequests()) {
-                    return AiMessage.from(clean, a.toolExecutionRequests());
-                }
-                return AiMessage.from(clean);
-            }
+    private static ChatMessage stripMoodAndClean(ChatMessage msg, Consumer<String> moodTrailSink) {
+        if (msg instanceof AiMessage a && a.text() != null && MoodTags.TAG.matcher(a.text()).find()) {
+            List<String> moods = MoodTags.extractValid(a.text());
+            String clean = MoodTags.stripAll(a.text());
+            moodTrailSink.accept(moods.isEmpty() ? null : String.join(",", moods));
+            return a.hasToolExecutionRequests() ? AiMessage.from(clean, a.toolExecutionRequests()) : AiMessage.from(clean);
         }
-        moodSink.accept(null);
+        moodTrailSink.accept(null);
         return msg;
     }
 
@@ -121,10 +115,12 @@ public class ChatMemoryDaoImpl implements ChatMemoryDao {
                     @Override
                     public void setValues(PreparedStatement ps, int i) throws SQLException {
                         ChatMessage msg = cleaned.get(i);
+                        // 预留：冗余兜底，当前无按 user_id 查询场景；索引已删，需要时按 user_id 建查询再补
                         ps.setString(1, userId);
                         ps.setString(2, anchorId);
                         ps.setString(3, msg.type().name());
                         ps.setString(4, ChatMessageSerializer.messageToJson(msg));
+                        // 预留：窗口消息按条渲染情绪用；语义与 cold_memory.mood 对齐（逗号连接完整轨迹）
                         ps.setString(5, moods.get(i));
                         ps.setLong(6, base + i);
                     }

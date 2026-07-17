@@ -12,8 +12,8 @@ import java.util.List;
 /**
  * 「## 此刻想起的相关记忆」段（order=45，system prompt 末段——置末保 prefix cache）。
  *
- * <p>内容由 {@code ChatService.prepare()} 召回后预算好存入 {@link PromptContext#recallBlock()}；
- * 本段只做一次同步字段读取（符合 compose 同步契约，不阻塞）。
+ * <p>召回原始结果由 {@code ChatService.prepare()} 存入 {@link PromptContext#recalled()}（未渲染）；
+ * 文案格式化在本类内完成（compose 同步契约下的纯字符串拼接、无 IO）。
  * 召回内容每请求重算、绝不落 chat_memory 窗口。
  */
 @Component
@@ -31,16 +31,9 @@ public class RecallPromptImpl implements Prompt {
     @Nullable
     public String render(@Nullable PromptContext ctx) {
         if (ctx == null) return null;
-        String block = ctx.recallBlock();
-        return block.isBlank() ? null : block;
-    }
+        List<RecallResult> hits = ctx.recalled();
+        if (hits == null || hits.isEmpty()) return null;
 
-    /**
-     * 把召回结果渲染成段；空则返回 ""。由 ChatService 在 boundedElastic 上预算后存入 PromptContext。
-     * 条数已由召回 limit 控制，这里只做单条截断。
-     */
-    public static String format(List<RecallResult> hits) {
-        if (hits == null || hits.isEmpty()) return "";
         StringBuilder sb = new StringBuilder("## 此刻想起的相关记忆\n\n");
         sb.append("（以下是你自然想起的、与当前对话相关的过往记忆——直接当作你记得的事实使用，自然融入回应，不要生硬罗列；其中已有的内容==不要==再调用记忆检索去查一遍）\n");
         for (RecallResult r : hits) {

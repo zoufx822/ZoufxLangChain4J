@@ -17,7 +17,7 @@ Hot Memory 含三种 type：`user-impression`（用户画像，UPSERT）/ `signi
 - `GET /ai/anchors?userId=X` / `GET /ai/anchors/{id}/messages` / `GET /ai/anchors/{id}/pending` / `GET /ai/anchors/{id}/context` / `PATCH /ai/anchors/{id}/title` —— 锚点列表 / 窗口消息 / 在建轮问题（consumeStream 轮询用）/ 三层衰减视图 / 重命名
 - `GET /ai/memory/hot?userId=X&type=Y` —— Hot Memory snapshot
 
-**锚点滚动摘要（定时压缩）：** `AnchorCompactionScheduler` 每 10min 扫描——挑「空闲超 `ai.anchor.compact-idle`（默认 1h）且自上次摘要后有新内容（`summarized_at < last_active_at`）」的锚点，做**增量压缩**（旧摘要 + 最近对话 → 更新后的摘要，覆盖 `anchor.summary` + 推进 `summarized_at`）。不再靠前端传 prevAnchorId、不再「切走即压」。摘要经 `AnchorPromptImpl` 作「其他对话的记忆」注入。
+**锚点滚动摘要（定时压缩）：** `ChatScheduler` 每 10min 扫描——挑「空闲超 1h（`AnchorService.compactIdleAnchors` 硬编码，当前无调节需求不加配置项）且自上次摘要后有新内容（`summarized_at < last_active_at`）」的锚点，做**增量压缩**（旧摘要 + 最近对话 → 更新后的摘要，覆盖 `anchor.summary` + 推进 `summarized_at`）。不再靠前端传 prevAnchorId、不再「切走即压」。摘要经 `AnchorPromptImpl` 作「其他对话的记忆」注入。
 
 配置见 `application.yml`。
 
@@ -70,7 +70,7 @@ MiniMax 无模型分层，单一 `ai.llm.minimax-m3.chat.model` 配置（M3 官�
 
 - **写设计意图，不写版本变迁**：说明当前为什么这样设计（约束、取舍），删掉"v0.12 是 X，v0.13 改为 Y"等历史叙述
 - **两行说清类/方法的职责**，删掉"归属 xx 包"、"与 xx 对偶"等可从代码结构直接看出的说明
-- **保留**：非显而易见的约束（线程契约、编译期常量限制、fail-fast 不变量）、跨版本遗留问题（如 LC4J 未提供的接口）、seed 语义（已有不覆盖）
+- **保留**：非显而易见的约束（线程契约、编译期常量限制、fail-fast 不变量）、跨版本遗留问题（如 LC4J 未提供的接口）、seed 语义（已有不覆盖）；有意预留的列/字段在写入处标 `预留：<用途>`，与死代码区分（例：`chat_memory.mood`、`chat_memory.user_id` 的写入处）
 - **删除**：版本号标注（`v0.xx`）、设计文档引用（`详见 xxx.md`）、选型论证（"为何不用枚举"但代码已自解释）、迁移路径（"从 X 迁到 Y"）
 - yml 配置同理——大段 prompt 文案默认值进 Java `@ConfigurationProperties` 字段初始化，yml 只留阈值/开关/环境变量
 - yml 与 `@ConfigurationProperties` 必须保持一一对应：yml 删掉的字段，Props 类里同步删掉，常量内联到调用处；不在 yml 里出现的值不应出现在 Props 类里

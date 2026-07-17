@@ -8,6 +8,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 /**
  * Web 搜索类工具的 SSE 事件 payload 工厂——构造 {@code tool_call} / {@code tool_result} JSON、解析工具入参、统计结果条数。
  *
@@ -66,14 +69,14 @@ public final class WebSearchEvents {
     public static int countResults(String result) {
         if (!StringUtils.hasText(result)) return 0;
         int count = 0;
-        java.util.regex.Matcher m = LIST_ITEM_PATTERN.matcher(result);
+        Matcher m = LIST_ITEM_PATTERN.matcher(result);
         while (m.find()) count++;
         return count;
     }
 
     /** 匹配列表条目首字符：行首（^）或换行后跟 "- " 或 "数字. "。用 (?m) 让 ^ 匹配每行起点。 */
-    private static final java.util.regex.Pattern LIST_ITEM_PATTERN =
-            java.util.regex.Pattern.compile("(?m)^(?:-\\s|\\d+\\.\\s)");
+    private static final Pattern LIST_ITEM_PATTERN =
+            Pattern.compile("(?m)^(?:-\\s|\\d+\\.\\s)");
 
     /** 截断字符串到指定长度，超过部分用 "…" 代替。 */
     public static String truncate(String s, int max) {

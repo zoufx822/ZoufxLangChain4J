@@ -17,6 +17,6 @@ public class ColdMemoryService {
 
     /** 追加一条经历流记录，返回新行自增 id——调用方需已在事务上下文。 */
     public long append(String userId, String role, String content, @Nullable String mood) {
-        return dao.append(userId, role, content, null, mood);
+        return dao.append(userId, role, content, mood);
     }
 }

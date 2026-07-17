@@ -15,7 +15,6 @@ import com.zoufx.ai.agent.chat.model.ChatEvent;
 import com.zoufx.ai.agent.chat.model.CommitResult;
 import com.zoufx.ai.agent.chat.model.StopResult;
 import com.zoufx.ai.agent.chat.model.Thinking;
-import com.zoufx.ai.agent.prompt.impl.RecallPromptImpl;
 import com.zoufx.ai.agent.prompt.support.PromptContext;
 import com.zoufx.ai.agent.prompt.support.PromptContextHolder;
 import com.zoufx.ai.agent.mood.support.MoodEventProcessor;
@@ -31,6 +30,7 @@ import com.zoufx.ai.agent.vector.property.RecallProps;
 import com.zoufx.ai.agent.vector.support.VectorPayload;
 import com.zoufx.ai.agent.tool.support.ToolNameMap;
 import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 聊天编排服务——一个类里可读到完整对话生命周期：
@@ -117,7 +118,24 @@ public class ChatService {
      * prepare 期间的硬错误在此兜底成一条 error 帧（buildStream 内部错误已由其自身收尾，不会漏到这）。
      */
     public Flux<ChatEvent> chat(@Nullable String anchorId, String prompt, Thinking thinking, String userId) {
-        return Blocking.call(() -> prepare(userId, anchorId, prompt))
+        // 注册表幽灵 pending 兜底②：prepare 跑在 boundedElastic 上，客户端若在 prepare 期间断连，
+        // flatMapMany 不会订阅、doFinally 也不会触发。cancelled + registered 构成双向探测：
+        // doOnCancel 先置位再读引用，prepare 先登记引用再读标志——两侧至少一侧必看到对方，
+        // 消除「取消落在 register 与引用可见之间」的窗口。（实测过 doOnDiscard：
+        // fromCallable+subscribeOn 组合下取消后产出的值只是静默丢弃、不经 discard 钩子，故不可依赖。）
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        AtomicReference<Turn> registered = new AtomicReference<>();
+        return Blocking.call(() -> prepare(userId, anchorId, prompt, registered, cancelled))
+                .doOnCancel(() -> {
+                    cancelled.set(true);
+                    Turn turn = registered.get();
+                    if (turn != null) {
+                        log.info("Client disconnected during prepare, releasing turn [turnId={}, anchorId={}]",
+                                turn.turnId, turn.anchorId);
+                        turnRegistry.remove(turn.turnId);
+                        releaseTurn(turn);   // 幂等；此时生成管道必未启动（Mono 已终止则本钩子不触发），无竞争
+                    }
+                })
                 .flatMapMany(turn -> buildStream(thinking, turn))
                 .onErrorResume(err -> {
                     log.error("Chat prepare failed [userId={}]", userId, err);
@@ -129,14 +147,22 @@ public class ChatService {
      * 在 {@code assistant.chat()} 启动前同步完成，直接构建本轮 {@link Turn}（turnId + 解析后的锚点 + 预计算向量）。
      *
      * <p>懒建锚点（anchorId 为空则新建）+ {@code chatMemoryService.seed}（committed 灌进 pending）在 try 外——
-     * 硬错误，直接传播；embed / 召回 / PromptContext 构建失败吞掉（辅助能力，不阻断对话，userEmbedding 留空）。
+     * 硬错误，直接传播；PromptContext 本体（soul/画像/其他锚点摘要）与 embed/召回解耦，只有 embed/召回
+     * 失败吞掉（辅助能力，不阻断对话，userEmbedding/recalled 留空）——embedding 服务抖动不该连累人格快照、
+     * 用户画像、跨锚点摘要一并从 system prompt 里消失。
      * 上一锚点的压缩不在此触发——改由 {@link com.zoufx.ai.agent.chat.support.ChatScheduler} 定时按空闲检测。
      *
      * <p>{@code turnRegistry.register} 紧跟锚点解析之后、embed/召回（慢网络调用）之前——锚点创建
      * 落库即刻可被 {@code GET /ai/anchors} 查到，若注册表登记晚于这些慢调用，会出现"锚点已存在但
      * pending 查不到在建轮"的窗口（实测约 100~200ms，足够被一次页面刷新撞上）。
+     *
+     * <p>register 之后的全部剩余代码包一层 try/catch：soul/画像/其他锚点摘要读取属硬错误（DB 故障等），
+     * 抛出即需从注册表摘除再上抛，否则 {@link #chat} 的 {@code flatMapMany} 不会订阅、doFinally 也不会
+     * 触发，该锚点 pending 永远卡住（幽灵 turn，{@code stop} 也救不了）。{@code registered}/{@code cancelled}
+     * 与调用方 doOnCancel 构成断连双向探测（见 {@link #chat} 注释）。
      */
-    private Turn prepare(String userId, @Nullable String anchorId, String prompt) {
+    private Turn prepare(String userId, @Nullable String anchorId, String prompt,
+                         AtomicReference<Turn> registered, AtomicBoolean cancelled) {
         Turn turn = Turn.builder()
                 .userId(userId)
                 .prompt(prompt)
@@ -146,26 +172,43 @@ public class ChatService {
 
         chatMemoryService.seed(turn.anchorId);
         turnRegistry.register(turn);
+        registered.set(turn);
+        // 双向探测补刀：取消若发生在 registered 可见之前，doOnCancel 读到 null 无从清理，由这里接手；
+        // 此后任何取消都能从 registered 读到本 turn，归 doOnCancel 管
+        if (cancelled.get()) {
+            turnRegistry.remove(turn.turnId);
+            chatMemoryService.discard(turn.anchorId);
+            log.info("Client disconnected before registration visible, released turn [turnId={}]", turn.turnId);
+            return turn;   // 下游已取消，返回值被直接丢弃——跳过 embed/召回等昂贵步骤
+        }
 
         try {
-            // prompt 向量化：召回 query + persistTurn 索引 cold user 行复用同一份，避免重复嵌入
-            Embedding emb = embeddingModel.embed(prompt).content();
-            turn.userEmbedding = emb;
-            // 借 chat window 大小在 cold_memory（跨锚点全量）近似出一个时间下界：
-            // 同一轮消息会同时落 chat_memory（发给 LLM 的原文）和 cold_memory（可召回索引），不排除的话，
-            // 刚发生的对话会被召回换个格式重复塞进 system prompt，让 LLM 把"刚说的话"误当成"想起的旧记忆"。
-            Long windowSince = coldMemoryDao.windowLowerBound(userId, chatProps.getLoadMessage());
-            List<RecallResult> recalled = recallService.recall(userId, emb, recallProps.getLimit(), windowSince);
+            List<RecallResult> recalled = List.of();
+            try {
+                // prompt 向量化：召回 query + persistTurn 索引 cold user 行复用同一份，避免重复嵌入
+                Embedding emb = embeddingModel.embed(prompt).content();
+                turn.userEmbedding = emb;
+                // 借 chat window 大小在 cold_memory（跨锚点全量）近似出一个时间下界：
+                // 同一轮消息会同时落 chat_memory（发给 LLM 的原文）和 cold_memory（可召回索引），不排除的话，
+                // 刚发生的对话会被召回换个格式重复塞进 system prompt，让 LLM 把"刚说的话"误当成"想起的旧记忆"。
+                Long windowSince = coldMemoryDao.windowLowerBound(userId, chatProps.getLoadMessage());
+                recalled = recallService.recall(userId, emb, recallProps.getLimit(), windowSince);
+            } catch (Exception e) {
+                log.warn("Embed/recall failed, skip auto-association [anchorId={}]: {}", turn.anchorId, e.toString());
+            }
+            Map<String, String> hotImpressionSnap = hotMemoryDao.snapshot(userId, HotMemoryType.USER_IMPRESSION);
+            turn.username = hotImpressionSnap.get("username");
             promptContextHolder.set(turn.anchorId, new PromptContext(
                     turn.anchorId,
                     userId,
                     soulDao.snapshot(),
-                    hotMemoryDao.snapshot(userId, HotMemoryType.USER_IMPRESSION),
+                    hotImpressionSnap,
                     anchorMemoryDao.listOtherAnchors(userId, turn.anchorId),
-                    RecallPromptImpl.format(recalled)
+                    recalled
             ));
-        } catch (Exception e) {
-            log.warn("Prepare failed, skip auto-association [anchorId={}]: {}", turn.anchorId, e.toString());
+        } catch (RuntimeException e) {
+            turnRegistry.remove(turn.turnId);
+            throw e;
         }
         return turn;
     }
@@ -221,15 +264,19 @@ public class ChatService {
     private void bridgeTokenStream(FluxSink<ChatEvent> sink, Thinking thinking, Turn turn) {
         MoodEventProcessor moodStripper = new MoodEventProcessor(sink, turn.userId);
         streamingChatPort.stream(turn.anchorId, turn.prompt, thinking)
-                // WithContext 变体：首个 thinking/content 回调时抓住 StreamingHandle，供取消时掐断上游
+                // WithContext 变体：首个 thinking/content 回调时抓住 StreamingHandle，供取消时掐断上游。
+                // stop 若在首 token 前抢到 claim，此时 handle 还不存在、abort() 的 cancel 落空——
+                // 故每次抓到 handle 都反查一次 claim，若已被抢占则就地掐断，防止上游白烧到自然结束。
                 .onPartialThinkingWithContext((pt, ctx) -> {
                     turn.handle.compareAndSet(null, ctx.streamingHandle());
                     turn.hasEmitted.set(true);
+                    if (cancelIfClaimed(turn, ctx.streamingHandle())) return;
                     if (pt != null && pt.text() != null) sink.next(new ChatEvent("thinking", pt.text()));
                 })
                 .onPartialResponseWithContext((pr, ctx) -> {
                     turn.handle.compareAndSet(null, ctx.streamingHandle());
                     turn.hasEmitted.set(true);
+                    if (cancelIfClaimed(turn, ctx.streamingHandle())) return;
                     moodStripper.accept(pr.text());
                 })
                 .beforeToolExecution(evt -> {
@@ -258,6 +305,13 @@ public class ChatService {
                 .start();
     }
 
+    /** 抓到 handle 时反查 claim：已被 stop 抢占则就地掐断上游，返回 true 供调用处跳过本次事件。 */
+    private boolean cancelIfClaimed(Turn turn, StreamingHandle handle) {
+        if (!turn.isClaimed()) return false;
+        if (!handle.isCancelled()) handle.cancel();
+        return true;
+    }
+
     // ====== 生命周期钩子 ======
 
     /**
@@ -272,7 +326,6 @@ public class ChatService {
             log.info("Skip persist, turn claimed by stop [turnId={}, anchorId={}]", turn.turnId, turn.anchorId);
             return;
         }
-        String lastMood = turn.lastMood();
         String moodTrail = turn.moodTrail();
         boolean hasContent = turn.hasContent();
         String assistantText = turn.assistantText();
@@ -286,7 +339,7 @@ public class ChatService {
                     coldAssistantId = coldMemoryService.append(turn.userId, "assistant", assistantText, moodTrail);
                 }
                 List<HotMemoryService.Entry> hotEntries = hotMemoryService.commit(turn.anchorId);
-                anchorService.touch(turn.anchorId, lastMood);
+                anchorService.touch(turn.anchorId, moodTrail);
                 if (!autoTitle.isBlank()) anchorService.updateTitleIfBlank(turn.anchorId, autoTitle);
                 return new CommitResult(coldUserId, coldAssistantId, hotEntries);
             });
@@ -335,14 +388,14 @@ public class ChatService {
         if (turn.hasContent()) {
             long now = System.currentTimeMillis();
             Mono<Void> coldUser = turn.userEmbedding != null
-                    ? indexer.indexAsync(turn.userId, VectorPayload.COLD, String.valueOf(result.coldUserId()), turn.prompt, "user", now, turn.userEmbedding)
-                    : indexer.indexTextAsync(turn.userId, VectorPayload.COLD, String.valueOf(result.coldUserId()), turn.prompt, "user", now);
+                    ? indexer.indexAsync(turn.userId, VectorPayload.COLD, String.valueOf(result.coldUserId()), turn.prompt, "user", now, turn.userEmbedding, turn.username)
+                    : indexer.indexTextAsync(turn.userId, VectorPayload.COLD, String.valueOf(result.coldUserId()), turn.prompt, "user", now, turn.username);
             fireIndex(coldUser, "cold-user");
             fireIndex(indexer.indexTextAsync(turn.userId, VectorPayload.COLD, String.valueOf(result.coldAssistantId()),
-                    turn.assistantText(), "assistant", now), "cold-assistant");
+                    turn.assistantText(), "assistant", now, turn.username), "cold-assistant");
         }
         for (HotMemoryService.Entry e : result.hotEntries()) {
-            fireIndex(indexer.indexTextAsync(e.userId(), e.type(), e.key(), e.embedText(), null, System.currentTimeMillis()),
+            fireIndex(indexer.indexTextAsync(e.userId(), e.type(), e.key(), e.embedText(), null, System.currentTimeMillis(), turn.username),
                     "hot-" + e.type());
         }
     }
